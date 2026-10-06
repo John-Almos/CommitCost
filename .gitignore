@@ -1,0 +1,16 @@
+node_modules/
+dist/
+.next/
+coverage/
+
+# Local databases and generated output
+*.db
+*.db-journal
+db/prisma/postgres/
+.commitcost/
+
+# Secrets: never commit these
+.env
+.env.*
+!.env.example
+*.pem

@@ -1,0 +1,33 @@
+{
+  "name": "commitcost",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tie cloud cost changes to the commits that caused them.",
+  "workspaces": [
+    "core",
+    "db",
+    "providers",
+    "cli"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "postinstall": "npm run db:generate",
+    "db:generate": "npm run generate -w @commitcost/db",
+    "db:push": "npm run push -w @commitcost/db",
+    "db:schema:postgres": "npm run schema:postgres -w @commitcost/db",
+    "seed": "npm run db:push && tsx cli/src/index.ts seed",
+    "demo": "npm run db:push && tsx cli/src/index.ts demo",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^5.0.3"
+  }
+}

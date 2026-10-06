@@ -1,0 +1,12 @@
+{
+  "name": "@commitcost/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "dependencies": {
+    "@commitcost/core": "0.1.0",
+    "@commitcost/db": "0.1.0",
+    "@commitcost/providers": "0.1.0"
+  }
+}
