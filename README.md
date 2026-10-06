@@ -2,7 +2,7 @@
 
 CommitCost connects cloud cost spikes to the commits that caused them. It pinpoints which PR made your AWS bill jump and why, and it warns you about cost regressions in pull requests before they're merged.
 
-> **Status:** Phases 1–3 of 5 are done: data model and mock mode, real AWS and GitHub integrations, and the attribution engine. The GitHub Action and the dashboard land in Phases 4 and 5. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+It has three parts that share one engine: a sync that pulls AWS Cost Explorer data and GitHub history, a dashboard that shows cost anomalies with their ranked suspect PRs, and a GitHub Action that comments on PRs with likely cost increases before they merge. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Quickstart (mock mode, no credentials)
 
@@ -13,9 +13,16 @@ npm install
 npm run demo
 ```
 
-`npm run demo` creates a local SQLite database in `.commitcost/`, generates 90 days of AWS costs and a fake GitHub history, stores them, runs anomaly detection and attribution over the stored data, and prints each anomaly with its ranked suspect PRs. It then checks the results against the injected ground truth (also written to `.commitcost/mock-ground-truth.json`) and exits non-zero if any injected commit isn't ranked #1.
+Then open http://localhost:3000.
 
-Example output for one anomaly:
+`npm run demo` creates a local SQLite database in `.commitcost/`, generates 90 days of AWS costs and a fake GitHub history, stores them, runs anomaly detection and attribution over the stored data, and checks the results against the injected ground truth (also written to `.commitcost/mock-ground-truth.json`). It stops with an error if any injected commit isn't ranked #1. Otherwise it starts the dashboard on that data:
+
+- **Overview:** daily cost per service with anomaly markers (▲ increase, ▼ decrease), spend tiles, and the top cost-impacting changes by monthly impact. Click a marker or a change to open the anomaly.
+- **Anomaly:** the cost chart around the onset, ranked suspect PRs with confidence, the explanation, the diff lines that caused it, and whether the pre-merge PR check would have caught it.
+- **Changes:** every merged PR with the anomalies it was blamed for and the PR check result.
+- **PR check:** paste any `git diff` to see the warnings and the exact comment the GitHub Action would post.
+
+`npm run demo:check` runs the same check without starting the dashboard (CI uses it) and prints each anomaly in the terminal. Example output for one anomaly:
 
 ```
 ▲ 2026-07-28  RDS app=api  +$85/day  +$2,538/mo  (7d, score 19.02)
@@ -31,10 +38,14 @@ Other commands:
 
 | Command | What it does |
 | --- | --- |
+| `npm run dashboard` | Start the dashboard on whatever is in the database (mock or synced) |
+| `npm run demo:check` | Seed mock data, analyze and verify attribution in the terminal |
 | `npm run seed` | Generate and store mock data without the summary |
 | `npm run sync` | Pull real AWS costs and GitHub history (see below) |
 | `npm run analyze` | Detect anomalies in stored data and rank suspect deploys |
 | `npm test` | Run unit tests |
+| `npm run build:web` | Production build of the dashboard (`npm start -w @commitcost/web` serves it) |
+| `npm run build:action` | Rebuild `action/dist/index.cjs` after changing the action or engine |
 | `npm run typecheck` | Type-check every package |
 | `npm run db:schema:postgres` | Write a Postgres copy of the Prisma schema to `db/prisma/postgres/` |
 
@@ -105,9 +116,41 @@ The heuristic explanations work without any LLM. To have Claude rewrite the top 
 - **Scoring:** 30% timing (closer is higher) and 70% relevance. Relevance comes from diff detectors that recognize cost patterns for the spiking service: queries inside loops, removed caches or batching, instance size and count changes, Lambda memory and concurrency, schedule frequency, cross-region replication, and removed S3 lifecycle rules. Files whose paths merely suggest the service count as weak evidence.
 - **Confidence** is lowered when a runner-up scores close behind, when nothing in the diff relates to the service, and for blips.
 
-## Installing the GitHub Action (Phase 4)
+## Installing the GitHub Action
 
-Coming in Phase 4.
+The Action reviews each PR's diff with the same detectors the attribution engine uses and posts one comment listing likely cost increases: the file and line, why it costs money, a rough monthly impact with its assumptions, and a suggested fix. On later pushes it edits that comment instead of adding new ones, and it replaces it with an all-clear when the risky code is gone. Test, vendored and lock files are skipped, and only findings at or above `min-confidence` are reported, to keep false positives down. It needs no AWS access.
+
+Add `.github/workflows/commitcost.yml` to the repo you want checked:
+
+```yaml
+name: CommitCost
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  cost-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: John-Almos/CommitCost/action@main
+        with:
+          min-confidence: "0.6"
+          # Optional: current monthly spend per service, to bound estimates.
+          # service-spend: '{"EC2": 4200, "Lambda": 900}'
+```
+
+| Input | Default | Meaning |
+| --- | --- | --- |
+| `github-token` | `${{ github.token }}` | Reads PR files and writes the comment |
+| `min-confidence` | `0.6` | Report findings at or above this confidence (0 to 1) |
+| `service-spend` | none | JSON of monthly spend per service, used to scale estimates |
+| `dry-run` | `false` | Write the review to the job summary only, never comment |
+
+The `warnings` output is the number of findings. PRs from forks get a read-only token, so on those the Action logs a warning and writes the job summary instead of commenting. Try it without installing anything on the dashboard's **PR check** page.
 
 ## Repository layout
 
@@ -117,6 +160,6 @@ db/          Prisma schema (SQLite locally, Postgres in production) and reposito
 providers/   Data sources: mock/, aws/ (Cost Explorer), github/ (REST), llm/ (optional Claude explainer)
 cli/         demo, seed, sync and analyze commands
 engine/      Anomaly detection, diff detectors, attribution scoring (pure, no I/O)
-action/      Phase 4: GitHub Action for pre-merge cost warnings
-web/         Phase 5: Next.js dashboard
+action/      GitHub Action for pre-merge cost warnings (bundled to action/dist/index.cjs)
+web/         Next.js dashboard
 ```

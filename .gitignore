@@ -1,5 +1,6 @@
 node_modules/
 dist/
+!action/dist/
 .next/
 coverage/
 
@@ -14,3 +15,7 @@ db/prisma/postgres/
 .env.*
 !.env.example
 *.pem
+
+# Next.js
+web/next-env.d.ts
+*.tsbuildinfo

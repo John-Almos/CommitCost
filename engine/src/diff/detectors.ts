@@ -198,7 +198,7 @@ const computeSize: Detector = (file) => {
       suggestion: up
         ? "Check utilisation first. If the extra capacity is only needed for a batch window, scale on a schedule instead of upsizing permanently."
         : "No action needed; this lowers cost.",
-      snippet: snippetAround(newSide(c.hunk), c.line, 3, 2),
+      snippet: snippetAround(c.hunk.lines, c.line, 4, 3),
       assumptions: "Price assumed proportional to instance size within a family (true for most current EC2/RDS families).",
     });
   }
@@ -238,7 +238,7 @@ const capacityChanges: Detector = (file) => {
     if (!Number.isFinite(from) || !Number.isFinite(to) || from === to || from <= 0) continue;
     const ratio = to / from;
     const up = ratio > 1;
-    const snippet = snippetAround(newSide(c.hunk), c.line, 3, 2);
+    const snippet = snippetAround(c.hunk.lines, c.line, 4, 3);
 
     const lambda = LAMBDA_RULES.find((r) => r.keys.includes(c.normKey) && (r.anyFile || LAMBDA_FILE.test(file.path)));
     if (lambda) {

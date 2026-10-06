@@ -2,7 +2,7 @@
 
 ## Packages
 
-npm workspaces, TypeScript run directly with `tsx` and `vitest` (no build step). Each package's `main` points at `src/index.ts`.
+npm workspaces, TypeScript run directly with `tsx` and `vitest`. Each package's `main` points at `src/index.ts`. Two things are built: the Action is bundled with esbuild into `action/dist/index.cjs` (committed, since GitHub runs it as is, and a test fails if it is stale), and the dashboard is built by Next.js with webpack, whose `extensionAlias` resolves the workspaces' `./x.js` imports to `.ts` sources.
 
 | Package | Depends on | Responsibility |
 | --- | --- | --- |
@@ -11,8 +11,8 @@ npm workspaces, TypeScript run directly with `tsx` and `vitest` (no build step).
 | `@commitcost/providers` | core, engine (types) | `mock/`, `aws/` (Cost Explorer with on-disk cache), `github/` (REST with pagination and rate-limit retries), `llm/` (Claude explainer) |
 | `@commitcost/engine` | core | Anomaly detection, diff detectors, candidate scoring, the `Explainer` interface. Pure functions, no I/O |
 | `@commitcost/cli` | all | `demo`, `seed`, `sync`, `analyze` |
-| `action/` (Phase 4) | core, engine | Diff-pattern detectors and the PR comment |
-| `web/` (Phase 5) | core, db, engine | Next.js dashboard |
+| `@commitcost/action` | core, engine | PR review (`reviewFiles`), impact estimates, the consolidated comment, and the Action entry point |
+| `@commitcost/web` | core, db, engine, action | Next.js dashboard: overview, anomaly detail, changes, PR check |
 
 Data flows one way: providers produce domain objects, db stores them, the engine reads domain objects and returns anomalies and attributions, and db stores those for the dashboard.
 
@@ -42,6 +42,10 @@ Prisma can't switch providers from an environment variable, so `db/prisma/schema
 
 ## Diff detectors
 
-`engine/src/diff/` parses unified-diff patches and runs detectors that each return findings with file, line, affected services, direction, confidence, why it costs money, a suggested fix and, where the diff states both values, a cost ratio. Attribution uses them to score relevance. The Phase 4 GitHub Action will reuse the same detectors on PR diffs.
+`engine/src/diff/` parses unified-diff patches and runs detectors that each return findings with file, line, affected services, direction, confidence, why it costs money, a suggested fix and, where the diff states both values, a cost ratio. Attribution uses them to score relevance. The GitHub Action runs the same detectors on PR diffs and adds a rough monthly impact from `engine/src/impact.ts` (list prices plus stated assumptions), so a pattern that explains a past spike is also what gets flagged before merge.
 
 Detectors work line by line, using indentation for loop scope, so they handle JS/TS, Python, YAML, HCL and CDK without a parser per language. The trade-off is that a loop body which runs past the end of a diff hunk is cut at the hunk boundary.
+
+## Dashboard
+
+`web/` is a Next.js App Router app. Pages are server components that read the database through `web/lib/data.ts`; the only client components are the SVG cost chart (hover crosshair, clickable anomaly markers, a table view for each chart) and the PR check form, which calls a server action that runs `reviewFiles` and `renderComment` from `@commitcost/action`. It reads the same `DATABASE_URL` as the CLI (default `.commitcost/commitcost.db`), so it shows mock data after `npm run demo` and real data after `npm run sync` and `npm run analyze`.

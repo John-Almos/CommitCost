@@ -9,7 +9,9 @@
     "db",
     "providers",
     "engine",
-    "cli"
+    "action",
+    "cli",
+    "web"
   ],
   "engines": {
     "node": ">=20"
@@ -20,12 +22,16 @@
     "db:push": "npm run push -w @commitcost/db",
     "db:schema:postgres": "npm run schema:postgres -w @commitcost/db",
     "seed": "npm run db:push && tsx cli/src/index.ts seed",
-    "demo": "npm run db:push && tsx cli/src/index.ts demo",
-    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "demo": "npm run demo:check && npm run dev -w @commitcost/web",
+    "demo:check": "npm run db:push && tsx cli/src/index.ts demo",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p web/tsconfig.json",
     "test": "vitest run",
     "test:watch": "vitest",
     "sync": "npm run db:push && tsx cli/src/index.ts sync",
-    "analyze": "npm run db:push && tsx cli/src/index.ts analyze"
+    "analyze": "npm run db:push && tsx cli/src/index.ts analyze",
+    "dashboard": "npm run dev -w @commitcost/web",
+    "build:web": "npm run build -w @commitcost/web",
+    "build:action": "npm run build -w @commitcost/action"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

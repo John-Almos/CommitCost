@@ -7,3 +7,4 @@ export * from "./diff/parse.js";
 export type * from "./diff/types.js";
 export { classifyDataCall } from "./diff/calls.js";
 export { findLoops, isLoopHeader } from "./diff/loops.js";
+export * from "./impact.js";

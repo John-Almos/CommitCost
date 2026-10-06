@@ -8,7 +8,7 @@ import { GROUND_TRUTH_PATH, seedMock } from "./seed.js";
 /**
  * Mock demo: seed mock data, run anomaly detection and attribution over what
  * was stored, and check the results against the injected ground truth.
- * Phase 5 replaces the terminal output with the dashboard.
+ * `npm run demo` runs this check, then starts the dashboard on the same data.
  */
 export async function runDemo(db: PrismaClient): Promise<boolean> {
   const dataset = await seedMock(db);
@@ -58,7 +58,7 @@ export async function runDemo(db: PrismaClient): Promise<boolean> {
   );
   console.log(blipOk ? green("✓ The crawler blip (no code cause) is reported with low confidence.") : red("✗ The no-cause blip was attributed with high confidence."));
   console.log();
-  console.log(dim(`Ground truth: ${relative(process.cwd(), GROUND_TRUTH_PATH)}. Results are stored in the database for the dashboard.`));
+  console.log(dim(`Ground truth: ${relative(process.cwd(), GROUND_TRUTH_PATH)}. Results are stored for the dashboard (npm run dashboard, http://localhost:3000).`));
   console.log();
   return missed.length === 0 && blipOk;
 }
