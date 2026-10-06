@@ -18,9 +18,9 @@ let db: PrismaClient;
 let orgId: string;
 
 beforeAll(async () => {
-  execFileSync("npx", ["prisma", "db", "push", "--skip-generate", "--schema", "prisma/schema.prisma"], {
+  execFileSync(process.execPath, ["scripts/prisma.mjs", "db", "push", "--skip-generate"], {
     cwd: dbDir,
-    env: { ...process.env, DATABASE_URL: url },
+    env: { ...process.env, COMMITCOST_DATABASE_URL: url },
     stdio: "pipe",
   });
   db = new PrismaClient({ datasources: { db: { url } } });

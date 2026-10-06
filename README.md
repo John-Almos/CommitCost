@@ -6,7 +6,7 @@ It has three parts that share one engine: a sync that pulls AWS Cost Explorer da
 
 ## Quickstart (mock mode, no credentials)
 
-Requires Node 20 or newer.
+Requires Node 20.9 or newer (Node 22 recommended; `.nvmrc` pins it, so `nvm install && nvm use` picks the right version). Check with `node -v`. On an older Node, `npm install` stops with an "Unsupported engine" error naming the required version, and `npm run demo` checks the Node version and installed dependencies before doing anything else. After switching Node versions, run `rm -rf node_modules && npm install`.
 
 ```sh
 npm install
@@ -69,9 +69,9 @@ The generator (`providers/src/mock/`) is deterministic for a given seed and end 
 
 ## Configuration
 
-Copy `.env.example` to `.env` if you need to override anything. With no `DATABASE_URL`, CommitCost uses `.commitcost/commitcost.db`.
+Copy `.env.example` to `.env` if you need to override anything. With no `COMMITCOST_DATABASE_URL`, CommitCost uses `.commitcost/commitcost.db`. It deliberately ignores `DATABASE_URL`, so a value exported for another project can't point it at the wrong database. If a schema change can't be applied to that default local database, `npm run demo` moves it aside (`.commitcost/commitcost.db.bak-*`) and starts fresh; mock data is regenerated and synced costs come back from the on-disk cache.
 
-To use Postgres, run `npm run db:schema:postgres`, set `DATABASE_URL` to your Postgres URL, and point Prisma at `db/prisma/postgres/schema.prisma`.
+To use Postgres, run `npm run db:schema:postgres`, set `COMMITCOST_DATABASE_URL` to your Postgres URL, and point Prisma at `db/prisma/postgres/schema.prisma`.
 
 ## Hosted mode: companies connect their own AWS and GitHub
 
@@ -82,7 +82,7 @@ CommitCost can run as a multi-company service. People sign in with GitHub, creat
 
 A worker (`npm run worker`) then syncs each workspace every 6 hours and re-runs attribution. Every row of cost, change and analysis data belongs to one workspace. Setting up the GitHub App, the AWS principal and hosting is covered in [docs/ONBOARDING.md](docs/ONBOARDING.md).
 
-Without a GitHub App configured, the dashboard runs in **local mode**: no sign-in, one local user, and the Demo workspace, so `npm run demo` works exactly as before. If you have a database from an earlier version, delete `.commitcost/commitcost.db` first; workspaces changed the schema.
+Without a GitHub App configured, the dashboard runs in **local mode**: no sign-in, one local user, and the Demo workspace, so `npm run demo` works exactly as before. An older local database is moved aside and recreated automatically, since workspaces changed the schema.
 
 ## Self-hosted: one workspace with your own credentials
 

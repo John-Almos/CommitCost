@@ -1,15 +1,24 @@
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+export const defaultDbFile = resolve(repoRoot, ".commitcost/commitcost.db");
 
-/** Default to a local SQLite file so mock mode needs zero configuration. */
+/**
+ * CommitCost reads COMMITCOST_DATABASE_URL, never the generic DATABASE_URL,
+ * so a DATABASE_URL exported for another project (often Postgres) can't
+ * point Prisma's SQLite schema at the wrong database. Defaults to a local
+ * SQLite file so mock mode needs zero configuration.
+ */
 export function ensureDatabaseUrl() {
-  if (!process.env.DATABASE_URL) {
-    const dir = resolve(repoRoot, ".commitcost");
-    mkdirSync(dir, { recursive: true });
-    process.env.DATABASE_URL = `file:${resolve(dir, "commitcost.db")}`;
+  const envFile = resolve(repoRoot, ".env");
+  if (!process.env.COMMITCOST_DATABASE_URL && existsSync(envFile)) process.loadEnvFile?.(envFile);
+  if (!process.env.COMMITCOST_DATABASE_URL) {
+    mkdirSync(dirname(defaultDbFile), { recursive: true });
+    process.env.COMMITCOST_DATABASE_URL = `file:${defaultDbFile}`;
   }
-  return process.env.DATABASE_URL;
+  return process.env.COMMITCOST_DATABASE_URL;
 }
+
+export const usingDefaultDb = (url) => url === `file:${defaultDbFile}`;

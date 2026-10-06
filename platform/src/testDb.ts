@@ -11,9 +11,9 @@ const dbDir = resolve(dirname(fileURLToPath(import.meta.url)), "../../db");
 export function createTestDb(): { db: PrismaClient; cleanup: () => Promise<void> } {
   const tmp = mkdtempSync(join(tmpdir(), "commitcost-platform-"));
   const url = `file:${join(tmp, "test.db")}`;
-  execFileSync("npx", ["prisma", "db", "push", "--skip-generate", "--schema", "prisma/schema.prisma"], {
+  execFileSync(process.execPath, ["scripts/prisma.mjs", "db", "push", "--skip-generate"], {
     cwd: dbDir,
-    env: { ...process.env, DATABASE_URL: url },
+    env: { ...process.env, COMMITCOST_DATABASE_URL: url },
     stdio: "pipe",
   });
   const db = new PrismaClient({ datasources: { db: { url } } });

@@ -52,7 +52,7 @@ Make the object publicly readable and set `COMMITCOST_CFN_TEMPLATE_URL` to its H
 
 ### 4. Database, web app and worker
 
-- Use Postgres in production: `npm run db:schema:postgres`, set `DATABASE_URL`, and apply `db/prisma/postgres/schema.prisma` with `prisma db push` (or migrations).
+- Use Postgres in production: `npm run db:schema:postgres`, set `COMMITCOST_DATABASE_URL`, and apply `db/prisma/postgres/schema.prisma` with `prisma db push` (or migrations).
 - Set `COMMITCOST_URL` (public HTTPS URL) and `COMMITCOST_SECRET` (32+ random characters).
 - Run the web app: `npm run build:web && npm run start -w @commitcost/web`.
 - Run at least one worker: `npm run worker`. Several workers are safe; each job is claimed by exactly one. `npm run worker -- --once` drains the queue and exits, which suits a cron job.

@@ -6,9 +6,9 @@ import type { NextConfig } from "next";
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 // Same default database as the CLI, so `npm run demo` and the dashboard share it.
-if (!process.env.DATABASE_URL) {
+if (!process.env.COMMITCOST_DATABASE_URL) {
   mkdirSync(resolve(repoRoot, ".commitcost"), { recursive: true });
-  process.env.DATABASE_URL = `file:${resolve(repoRoot, ".commitcost/commitcost.db")}`;
+  process.env.COMMITCOST_DATABASE_URL = `file:${resolve(repoRoot, ".commitcost/commitcost.db")}`;
 }
 
 const config: NextConfig = {
@@ -23,7 +23,7 @@ const config: NextConfig = {
     cfg.resolve.extensionAlias = { ".js": [".ts", ".tsx", ".js"] };
     return cfg;
   },
-  env: { DATABASE_URL: process.env.DATABASE_URL },
+  env: { COMMITCOST_DATABASE_URL: process.env.COMMITCOST_DATABASE_URL },
   // Don't write web/AGENTS.md on every dev start.
   agentRules: false,
 };
