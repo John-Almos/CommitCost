@@ -1,4 +1,4 @@
-import type { Service } from "@commitcost/core";
+import type { KnownService } from "@commitcost/core";
 
 /**
  * Baseline daily spend for a ~10-engineer SaaS on AWS (about $25k/month).
@@ -18,7 +18,7 @@ export interface ServiceProfile {
 
 export const TAG_KEY = "app";
 
-export const SERVICE_PROFILES: Record<Service, ServiceProfile> = {
+export const SERVICE_PROFILES: Record<KnownService, ServiceProfile> = {
   EC2: {
     baseDailyUsd: 420,
     tagShares: { api: 0.45, worker: 0.35, web: 0.15, "": 0.05 },

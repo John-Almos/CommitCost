@@ -16,6 +16,7 @@
   },
   "devDependencies": {
     "prisma": "^6.19.0",
-    "@commitcost/providers": "0.1.0"
+    "@commitcost/providers": "0.1.0",
+    "@commitcost/engine": "0.1.0"
   }
 }

@@ -7,6 +7,7 @@
   "dependencies": {
     "@commitcost/core": "0.1.0",
     "@commitcost/db": "0.1.0",
-    "@commitcost/providers": "0.1.0"
+    "@commitcost/providers": "0.1.0",
+    "@commitcost/engine": "0.1.0"
   }
 }

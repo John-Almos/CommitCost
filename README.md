@@ -2,7 +2,7 @@
 
 CommitCost connects cloud cost spikes to the commits that caused them. It pinpoints which PR made your AWS bill jump and why, and it warns you about cost regressions in pull requests before they're merged.
 
-> **Status:** Phase 1 of 5 (data model and mock mode). Real AWS and GitHub integrations, the attribution engine, the GitHub Action, and the dashboard land in later phases. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+> **Status:** Phases 1–3 of 5 are done: data model and mock mode, real AWS and GitHub integrations, and the attribution engine. The GitHub Action and the dashboard land in Phases 4 and 5. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Quickstart (mock mode, no credentials)
 
@@ -13,13 +13,27 @@ npm install
 npm run demo
 ```
 
-`npm run demo` creates a local SQLite database in `.commitcost/`, generates 90 days of AWS costs and a fake GitHub history, stores them, and prints per-service cost charts with the injected spikes and the commits that caused them. The ground truth is written to `.commitcost/mock-ground-truth.json`.
+`npm run demo` creates a local SQLite database in `.commitcost/`, generates 90 days of AWS costs and a fake GitHub history, stores them, runs anomaly detection and attribution over the stored data, and prints each anomaly with its ranked suspect PRs. It then checks the results against the injected ground truth (also written to `.commitcost/mock-ground-truth.json`) and exits non-zero if any injected commit isn't ranked #1.
+
+Example output for one anomaly:
+
+```
+▲ 2026-07-28  RDS app=api  +$85/day  +$2,538/mo  (7d, score 19.02)
+   #1  82%  PR #128 Show line items on order history page ✓ injected cause
+      RDS cost in app "api" rose $85/day (+47%) starting 2026-07-28, about $2,538/month extra.
+      PR #128 "Show line items on order history page" by @dev-priya was merged 2 days before.
+      Database query inside a loop (N+1) (services/api/src/routes/orders.ts:44): ...
+   #2  12%  PR #127 Refactor order repository to use a query builder
+   #3   9%  PR #130 Validate request body on teams endpoints
+```
 
 Other commands:
 
 | Command | What it does |
 | --- | --- |
 | `npm run seed` | Generate and store mock data without the summary |
+| `npm run sync` | Pull real AWS costs and GitHub history (see below) |
+| `npm run analyze` | Detect anomalies in stored data and rank suspect deploys |
 | `npm test` | Run unit tests |
 | `npm run typecheck` | Type-check every package |
 | `npm run db:schema:postgres` | Write a Postgres copy of the Prisma schema to `db/prisma/postgres/` |
@@ -48,25 +62,48 @@ Copy `.env.example` to `.env` if you need to override anything. With no `DATABAS
 
 To use Postgres, run `npm run db:schema:postgres`, set `DATABASE_URL` to your Postgres URL, and point Prisma at `db/prisma/postgres/schema.prisma`.
 
-## Connecting real AWS and GitHub (Phase 2)
+## Connecting real AWS and GitHub
 
-Coming in Phase 2. CommitCost only ever needs read-only AWS access. This is the minimal IAM policy it will require:
+1. **AWS.** CommitCost only needs read-only Cost Explorer access. Attach this policy to the user or role whose credentials you use:
 
-```json
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Sid": "CommitCostReadOnlyCostExplorer",
-      "Effect": "Allow",
-      "Action": ["ce:GetCostAndUsage", "ce:GetTags"],
-      "Resource": "*"
-    }
-  ]
-}
-```
+   ```json
+   {
+     "Version": "2012-10-17",
+     "Statement": [
+       {
+         "Sid": "CommitCostReadOnlyCostExplorer",
+         "Effect": "Allow",
+         "Action": ["ce:GetCostAndUsage"],
+         "Resource": "*"
+       }
+     ]
+   }
+   ```
 
-Credentials come from the standard AWS chain (environment variables or an AWS profile). GitHub access uses a personal access token with read-only access to the repository's contents and pull requests. Never commit credentials: `.env` is git-ignored.
+   Credentials come from the standard AWS chain (`AWS_PROFILE`, access key env vars, SSO, or an instance role). Run it against the payer (management) account to see the whole organization's spend. To break costs down by team or app, activate a cost-allocation tag in the Billing console and set `COMMITCOST_TAG_KEY`.
+
+2. **GitHub.** Create a fine-grained personal access token with read-only **Contents** and **Pull requests** access to the repository.
+
+3. **Configure and run.**
+
+   ```sh
+   cp .env.example .env   # then fill in GITHUB_TOKEN, GITHUB_REPO and optionally COMMITCOST_TAG_KEY
+   npm run sync           # pulls 90 days of costs and merged PRs
+   npm run analyze        # finds anomalies and ranks the PRs behind them
+   ```
+
+`sync` is incremental: later runs only fetch days since the last sync (re-fetching the last 3, which AWS still revises). Cost Explorer charges $0.01 per request, so responses for settled date ranges are cached on disk in `.commitcost/cache/` and never re-requested; `sync` prints how many requests it made.
+
+### Optional: LLM explanations
+
+The heuristic explanations work without any LLM. To have Claude rewrite the top suspect's explanation from the actual diff, set `COMMITCOST_LLM=anthropic` and `ANTHROPIC_API_KEY`. Only the suspect PR's diff (capped at 12k characters) and the cost numbers are sent. To add another provider, implement the `Explainer` interface in `engine/src/explain.ts`.
+
+### How attribution works
+
+- **Anomalies:** for each service, every day is compared with the median of the previous 14 days of the same kind (weekdays against weekdays, weekends against weekends), using a MAD-based spread. A day is flagged when it is at least 4 robust standard deviations away, at least $10, and at least 10% off. Consecutive flagged days form one anomaly. If cost stays at the new level it's a step change, with monthly impact = daily delta × 30. If it returns to baseline it's a blip.
+- **Candidates:** deploys merged from 3 days before the onset through the onset day.
+- **Scoring:** 30% timing (closer is higher) and 70% relevance. Relevance comes from diff detectors that recognize cost patterns for the spiking service: queries inside loops, removed caches or batching, instance size and count changes, Lambda memory and concurrency, schedule frequency, cross-region replication, and removed S3 lifecycle rules. Files whose paths merely suggest the service count as weak evidence.
+- **Confidence** is lowered when a runner-up scores close behind, when nothing in the diff relates to the service, and for blips.
 
 ## Installing the GitHub Action (Phase 4)
 
@@ -77,9 +114,9 @@ Coming in Phase 4.
 ```
 core/        Domain types, provider interfaces, date helpers
 db/          Prisma schema (SQLite locally, Postgres in production) and repository functions
-providers/   Data sources: mock now; aws/ and github/ in Phase 2
-cli/         `seed` and `demo` commands
-engine/      Phase 3: anomaly detection, attribution, diff analysis
+providers/   Data sources: mock/, aws/ (Cost Explorer), github/ (REST), llm/ (optional Claude explainer)
+cli/         demo, seed, sync and analyze commands
+engine/      Anomaly detection, diff detectors, attribution scoring (pure, no I/O)
 action/      Phase 4: GitHub Action for pre-merge cost warnings
 web/         Phase 5: Next.js dashboard
 ```

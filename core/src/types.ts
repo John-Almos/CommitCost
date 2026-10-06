@@ -11,7 +11,9 @@ export type CloudProvider = "aws";
 
 /** Normalized service names. Providers map their native names onto these. */
 export const SERVICES = ["EC2", "RDS", "Lambda", "S3", "DynamoDB", "DataTransfer"] as const;
-export type Service = (typeof SERVICES)[number];
+export type KnownService = (typeof SERVICES)[number];
+/** Spend from services CommitCost doesn't model separately is summed into "Other". */
+export type Service = KnownService | "Other";
 
 export type CostSource = "mock" | "aws-cost-explorer";
 
@@ -57,31 +59,44 @@ export type AnomalyDirection = "increase" | "decrease";
 /** A significant deviation in a service's daily cost from its baseline. */
 export interface CostAnomaly {
   service: Service;
-  /** Tag value the anomaly is concentrated in, if known. */
+  /** Tag value most of the change is concentrated in, if one dominates. */
   tagValue?: string;
   /** First day the cost deviated. */
   onsetDate: IsoDate;
+  /** Consecutive days flagged, starting at onset. */
+  durationDays: number;
+  /** Expected cost on the onset day (weekday-aware rolling median). */
   baselineUsd: number;
+  /** Average observed cost over the flagged days. */
   observedUsd: number;
-  /** observed - baseline, per day. */
+  /** Average observed - baseline per flagged day. */
   deltaUsd: number;
   direction: AnomalyDirection;
-  /** Deviation in robust standard units (e.g. MAD-scaled). */
+  /** Largest deviation in robust standard units (MAD-scaled). */
   score: number;
+  /** True when cost stayed at the new level after the flagged run (a step
+   * change), false for a blip that returned to baseline. */
+  persistent: boolean;
+  /** deltaUsd * 30 for persistent changes; the one-off excess for blips. */
+  estimatedMonthlyImpactUsd: number;
 }
 
 /** Breakdown of how a suspect deploy was scored. All components are 0..1. */
 export interface ScoreBreakdown {
   timing: number;
   relevance: number;
-  magnitude?: number;
-  [component: string]: number | undefined;
+  /** Weighted combination used for ranking. */
+  total: number;
 }
 
 /** One suspect deploy for one anomaly. */
 export interface Attribution {
   anomaly: CostAnomaly;
   commitSha: string;
+  prNumber: number | null;
+  title: string;
+  /** Strongest evidence in the diff, e.g. "services/api/src/routes/orders.ts:43". */
+  evidence: { file: string; line?: number; detail: string; snippet?: string }[];
   /** 1 = most likely cause. */
   rank: number;
   /** 0..1 */

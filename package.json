@@ -8,6 +8,7 @@
     "core",
     "db",
     "providers",
+    "engine",
     "cli"
   ],
   "engines": {
@@ -22,7 +23,9 @@
     "demo": "npm run db:push && tsx cli/src/index.ts demo",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "sync": "npm run db:push && tsx cli/src/index.ts sync",
+    "analyze": "npm run db:push && tsx cli/src/index.ts analyze"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

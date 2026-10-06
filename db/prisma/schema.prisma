@@ -67,17 +67,20 @@ model DeployFile {
 /// A significant deviation in a service's daily cost from its baseline.
 /// This is the "cost change" that attributions point at.
 model CostAnomaly {
-  id          String   @id @default(cuid())
-  provider    String
-  service     String
-  tagValue    String   @default("")
-  onsetDate   DateTime
-  baselineUsd Float
-  observedUsd Float
-  deltaUsd    Float    // per day, observed - baseline
-  direction   String   // "increase" | "decrease"
-  score       Float    // robust deviation score
-  detectedAt  DateTime @default(now())
+  id                        String   @id @default(cuid())
+  provider                  String
+  service                   String
+  tagValue                  String   @default("") // app tag the change is concentrated in, if any
+  onsetDate                 DateTime
+  durationDays              Int
+  baselineUsd               Float
+  observedUsd               Float
+  deltaUsd                  Float    // per day, observed - baseline
+  direction                 String   // "increase" | "decrease"
+  score                     Float    // robust deviation score
+  persistent                Boolean  // step change (true) or blip (false)
+  estimatedMonthlyImpactUsd Float
+  detectedAt                DateTime @default(now())
 
   attributions Attribution[]
 
@@ -95,7 +98,8 @@ model Attribution {
   deploy                    Deploy      @relation(fields: [deployId], references: [id], onDelete: Cascade)
   rank                      Int
   confidence                Float       // 0..1
-  scores                    Json        // ScoreBreakdown: { timing, relevance, ... }
+  scores                    Json        // ScoreBreakdown: { timing, relevance, total }
+  evidence                  Json        // [{ file, line, detail, snippet }]
   explanation               String
   explanationSource         String      // "heuristic" | "llm"
   estimatedMonthlyImpactUsd Float

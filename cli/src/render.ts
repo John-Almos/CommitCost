@@ -77,3 +77,35 @@ export function renderSpikeTable(dataset: MockDataset): string {
   );
   return [...rows, ...blips].join("\n\n");
 }
+
+/** Ranked suspects per anomaly. With ground truth (mock mode), marks hits and misses. */
+export function renderReports(
+  reports: import("@commitcost/engine").AnomalyReport[],
+  /** Mock mode: the commit known to cause this anomaly, if any. */
+  expectedCause?: (anomaly: import("@commitcost/core").CostAnomaly) => string | undefined,
+  maxSuspects = 3,
+): string {
+  if (reports.length === 0) return dim("No anomalies found.");
+  return reports
+    .map(({ anomaly: a, suspects }) => {
+      const arrow = a.direction === "increase" ? red("▲") : green("▼");
+      const delta = `${a.deltaUsd >= 0 ? "+" : "-"}${usd(Math.abs(a.deltaUsd))}/day`;
+      const impact = a.persistent ? `${a.estimatedMonthlyImpactUsd >= 0 ? "+" : "-"}${usd(Math.abs(a.estimatedMonthlyImpactUsd))}/mo` : `one-off ${usd(a.estimatedMonthlyImpactUsd)}`;
+      const scope = a.tagValue ? dim(` app=${a.tagValue}`) : "";
+      const lines = [`${arrow} ${bold(a.onsetDate)}  ${bold(a.service)}${scope}  ${delta}  ${impact}  ${dim(`(${a.durationDays}d, score ${a.score})`)}`];
+
+      if (suspects.length === 0) lines.push(`   ${dim("No deploys in the lookback window.")}`);
+      for (const s of suspects.slice(0, maxSuspects)) {
+        const hit = expectedCause?.(a) === s.commitSha ? green(" ✓ injected cause") : "";
+        const conf = `${Math.round(s.confidence * 100)}%`.padStart(4);
+        const label = `#${s.rank} ${conf}  ${s.prNumber ? `PR #${s.prNumber}` : s.commitSha.slice(0, 7)} ${s.title}`;
+        lines.push(`   ${s.rank === 1 ? bold(label) : dim(label)}${hit}`);
+        if (s.rank === 1) {
+          lines.push(`      ${s.explanation}${s.explanationSource === "llm" ? dim(" (LLM)") : ""}`);
+          for (const e of s.evidence.slice(0, 1)) lines.push(dim(`      ${e.file}${e.line ? `:${e.line}` : ""}`));
+        }
+      }
+      return lines.join("\n");
+    })
+    .join("\n\n");
+}

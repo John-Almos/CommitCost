@@ -6,7 +6,8 @@ import { fileURLToPath } from "node:url";
 import { generateMockDataset } from "@commitcost/providers";
 import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { clearMockData, loadDailyServiceTotals, saveCostRecords, saveDeploys } from "./repository.js";
+import { analyze } from "@commitcost/engine";
+import { clearMockData, latestCostDate, latestDeployDate, loadCostRecords, loadDailyServiceTotals, loadDeploys, saveAnalysis, saveCostRecords, saveDeploys } from "./repository.js";
 
 const dbDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const tmp = mkdtempSync(join(tmpdir(), "commitcost-db-"));
@@ -64,10 +65,30 @@ describe("repository", () => {
     expect(files).toBe(data.deploys.reduce((n, d) => n + d.files.length, 0));
   }, 60_000);
 
+  it("loads stored data back as domain objects", async () => {
+    expect(await loadCostRecords(db)).toHaveLength(data.costs.length);
+    const deploys = await loadDeploys(db, data.repo);
+    expect(deploys.find((d) => d.commitSha === data.spikes[0]!.commitSha)).toEqual(data.deploys.find((d) => d.commitSha === data.spikes[0]!.commitSha));
+    expect(await latestCostDate(db, "mock")).toBe(data.end);
+    expect(await latestDeployDate(db, data.repo)).toBe(data.deploys.at(-1)!.mergedAt.slice(0, 10));
+  });
+
+  it("saves analysis results and replaces them on re-run", async () => {
+    const reports = await analyze(await loadCostRecords(db), await loadDeploys(db, data.repo));
+    await saveAnalysis(db, reports, data.repo);
+    await saveAnalysis(db, reports, data.repo);
+    expect(await db.costAnomaly.count()).toBe(reports.length);
+    const top = await db.attribution.findFirst({ where: { rank: 1, anomaly: { service: "RDS" } }, include: { deploy: true } });
+    expect(top?.deploy.commitSha).toBe(data.spikes[0]!.commitSha);
+    expect(top?.evidence).toEqual(reports.find((r) => r.anomaly.service === "RDS")!.suspects[0]!.evidence);
+  }, 60_000);
+
   it("clears mock data", async () => {
     await clearMockData(db, data.repo);
     expect(await db.costRecord.count()).toBe(0);
     expect(await db.deploy.count()).toBe(0);
     expect(await db.deployFile.count()).toBe(0);
+    expect(await db.costAnomaly.count()).toBe(0);
+    expect(await db.attribution.count()).toBe(0);
   });
 });
