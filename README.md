@@ -69,9 +69,9 @@ The generator (`providers/src/mock/`) is deterministic for a given seed and end 
 
 ## Configuration
 
-Copy `.env.example` to `.env` if you need to override anything. With no `DATABASE_URL`, CommitCost uses `.commitcost/commitcost.db`.
+Copy `.env.example` to `.env` if you need to override anything. With no `COMMITCOST_DATABASE_URL`, CommitCost uses `.commitcost/commitcost.db`. It deliberately ignores `DATABASE_URL`, so a value exported for another project can't point it at the wrong database. If a schema change can't be applied to that default local database, `npm run demo` moves it aside (`.commitcost/commitcost.db.bak-*`) and starts fresh; mock data is regenerated and synced costs come back from the on-disk cache.
 
-To use Postgres, run `npm run db:schema:postgres`, set `DATABASE_URL` to your Postgres URL, and point Prisma at `db/prisma/postgres/schema.prisma`.
+To use Postgres, run `npm run db:schema:postgres`, set `COMMITCOST_DATABASE_URL` to your Postgres URL, and point Prisma at `db/prisma/postgres/schema.prisma`.
 
 ## Connecting real AWS and GitHub
 
