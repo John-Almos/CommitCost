@@ -1,0 +1,25 @@
+name: CommitCost PR cost check
+description: "Comments on pull requests with likely AWS cost increases (N+1 queries, instance upsizes, Lambda memory, removed caches, and more)."
+author: CommitCost
+branding:
+  icon: dollar-sign
+  color: green
+inputs:
+  github-token:
+    description: "Token used to read the PR's files and write the comment. The default GITHUB_TOKEN works with `pull-requests: write`."
+    default: ${{ github.token }}
+  min-confidence:
+    description: "Only report findings at or above this confidence (0-1). Higher means fewer, surer comments."
+    default: "0.6"
+  service-spend:
+    description: "Optional JSON of current monthly spend per service, e.g. {\"Lambda\":900,\"EC2\":4200}, used to bound estimates."
+    default: ""
+  dry-run:
+    description: "When \"true\", writes the review to the job summary only and never comments."
+    default: "false"
+outputs:
+  warnings:
+    description: "Number of cost warnings found."
+runs:
+  using: node24
+  main: dist/index.cjs

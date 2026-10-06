@@ -1,0 +1,110 @@
+// CommitCost data model.
+//
+// This schema targets SQLite for local development and mock mode. For Postgres,
+// run `npm run db:schema:postgres`, which writes prisma/postgres/schema.prisma
+// with only the datasource provider changed. Keep this file portable: no
+// provider-specific types or scalar lists.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("COMMITCOST_DATABASE_URL")
+}
+
+/// One day of spend for one service and one cost-allocation tag value.
+/// Empty strings (not NULL) mean "not grouped by tag" / "untagged" so the
+/// unique key works the same way on SQLite and Postgres.
+model CostRecord {
+  id        String   @id @default(cuid())
+  date      DateTime // midnight UTC of the billing day
+  provider  String   // "aws"
+  accountId String
+  service   String   // normalized: EC2, RDS, Lambda, S3, DynamoDB, DataTransfer
+  tagKey    String   @default("")
+  tagValue  String   @default("")
+  amountUsd Float
+  source    String   // "mock" | "aws-cost-explorer"
+  fetchedAt DateTime @default(now())
+
+  @@unique([date, provider, accountId, service, tagKey, tagValue])
+  @@index([service, date])
+}
+
+/// A change that reached the default branch (merged PR or direct push).
+model Deploy {
+  id        String       @id @default(cuid())
+  repo      String       // "owner/name"
+  commitSha String
+  prNumber  Int?
+  mergedAt  DateTime
+  author    String
+  title     String
+  body      String?
+  url       String?
+  files     DeployFile[]
+
+  attributions Attribution[]
+
+  @@unique([repo, commitSha])
+  @@index([mergedAt])
+}
+
+model DeployFile {
+  id        String  @id @default(cuid())
+  deployId  String
+  deploy    Deploy  @relation(fields: [deployId], references: [id], onDelete: Cascade)
+  path      String
+  additions Int
+  deletions Int
+  patch     String?
+
+  @@index([deployId])
+}
+
+/// A significant deviation in a service's daily cost from its baseline.
+/// This is the "cost change" that attributions point at.
+model CostAnomaly {
+  id                        String   @id @default(cuid())
+  provider                  String
+  service                   String
+  tagValue                  String   @default("") // app tag the change is concentrated in, if any
+  onsetDate                 DateTime
+  durationDays              Int
+  baselineUsd               Float
+  observedUsd               Float
+  deltaUsd                  Float    // per day, observed - baseline
+  direction                 String   // "increase" | "decrease"
+  score                     Float    // robust deviation score
+  persistent                Boolean  // step change (true) or blip (false)
+  estimatedMonthlyImpactUsd Float
+  detectedAt                DateTime @default(now())
+
+  attributions Attribution[]
+
+  @@unique([provider, service, tagValue, onsetDate])
+  @@index([onsetDate])
+}
+
+/// Links a cost change to a suspect deploy. An anomaly has one row per
+/// candidate deploy, ranked; rank 1 is the most likely cause.
+model Attribution {
+  id                        String      @id @default(cuid())
+  anomalyId                 String
+  anomaly                   CostAnomaly @relation(fields: [anomalyId], references: [id], onDelete: Cascade)
+  deployId                  String
+  deploy                    Deploy      @relation(fields: [deployId], references: [id], onDelete: Cascade)
+  rank                      Int
+  confidence                Float       // 0..1
+  scores                    Json        // ScoreBreakdown: { timing, relevance, total }
+  evidence                  Json        // [{ file, line, detail, snippet }]
+  explanation               String
+  explanationSource         String      // "heuristic" | "llm"
+  estimatedMonthlyImpactUsd Float
+  createdAt                 DateTime    @default(now())
+
+  @@unique([anomalyId, deployId])
+  @@index([anomalyId, rank])
+}

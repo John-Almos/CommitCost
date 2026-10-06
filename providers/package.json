@@ -1,0 +1,14 @@
+{
+  "name": "@commitcost/providers",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.131.0",
+    "@aws-sdk/client-cost-explorer": "^3.1146.0",
+    "@commitcost/core": "0.1.0",
+    "@commitcost/engine": "0.1.0"
+  }
+}

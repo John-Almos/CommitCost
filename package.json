@@ -1,0 +1,42 @@
+{
+  "name": "commitcost",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tie cloud cost changes to the commits that caused them.",
+  "workspaces": [
+    "core",
+    "db",
+    "providers",
+    "engine",
+    "action",
+    "cli",
+    "web"
+  ],
+  "engines": {
+    "node": ">=20.9"
+  },
+  "scripts": {
+    "postinstall": "npm run db:generate",
+    "db:generate": "npm run generate -w @commitcost/db",
+    "db:push": "npm run push -w @commitcost/db",
+    "db:schema:postgres": "npm run schema:postgres -w @commitcost/db",
+    "seed": "node scripts/preflight.mjs && npm run db:push && tsx cli/src/index.ts seed",
+    "demo": "npm run demo:check && npm run dev -w @commitcost/web",
+    "demo:check": "node scripts/preflight.mjs && npm run db:push && tsx cli/src/index.ts demo",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p web/tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "sync": "node scripts/preflight.mjs && npm run db:push && tsx cli/src/index.ts sync",
+    "analyze": "node scripts/preflight.mjs && npm run db:push && tsx cli/src/index.ts analyze",
+    "dashboard": "node scripts/preflight.mjs && npm run dev -w @commitcost/web",
+    "build:web": "npm run build -w @commitcost/web",
+    "build:action": "npm run build -w @commitcost/action"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^5.0.3"
+  }
+}
