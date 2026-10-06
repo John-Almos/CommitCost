@@ -1,7 +1,10 @@
 import Link from "next/link";
 import { ServiceChart } from "@/components/ServiceChart";
 import { DirectionBadge, Meter } from "@/components/ui";
+import { SetupChecklist } from "@/components/Setup";
+import { requireWorkspace } from "@/lib/auth";
 import { getOverview } from "@/lib/data";
+import { getSetupState } from "@/lib/setup";
 import { SERVICE_NAMES, fmtDate, usd, usdFull } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
@@ -11,12 +14,24 @@ const RANGES = [30, 60, 90] as const;
 export default async function Overview({ searchParams }: { searchParams: Promise<{ range?: string }> }) {
   const { range: rangeParam } = await searchParams;
   const range = RANGES.find((r) => String(r) === rangeParam) ?? 90;
-  const data = await getOverview(range);
+  const { org, role } = await requireWorkspace();
+  const data = await getOverview(org.id, range);
   if (!data) {
+    if (org.isDemo) {
+      return (
+        <div className="card empty">
+          No demo data yet. Run <code>npm run demo</code> to generate it.
+        </div>
+      );
+    }
     return (
-      <div className="card empty">
-        No cost data yet. Run <code>npm run demo</code> for mock data, or <code>npm run sync</code> with real credentials.
-      </div>
+      <>
+        <h1>Welcome to {org.name}</h1>
+        <p className="sub">Connect AWS and GitHub, and CommitCost will match changes in your bill to the pull requests that caused them.</p>
+        <div className="card">
+          <SetupChecklist state={await getSetupState(org.id)} canEdit={role === "owner"} />
+        </div>
+      </>
     );
   }
   const change = data.prev30 > 0 ? (data.last30 - data.prev30) / data.prev30 : 0;

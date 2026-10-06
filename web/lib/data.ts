@@ -88,14 +88,14 @@ const toDeploy = (d: DeployWithFiles): DeployRow => ({
   files: d.files.map((f) => ({ path: f.path, additions: f.additions, deletions: f.deletions, patch: f.patch })),
 });
 
-export async function dataMode(): Promise<"mock" | "live" | "empty"> {
-  const row = await db.costRecord.findFirst({ select: { source: true } });
+export async function dataMode(orgId: string): Promise<"mock" | "live" | "empty"> {
+  const row = await db.costRecord.findFirst({ where: { orgId }, select: { source: true } });
   return !row ? "empty" : row.source === "mock" ? "mock" : "live";
 }
 
-async function anomalyRows(where: object = {}): Promise<AnomalyRow[]> {
+async function anomalyRows(orgId: string, where: object = {}): Promise<AnomalyRow[]> {
   const rows = await db.costAnomaly.findMany({
-    where,
+    where: { ...where, orgId },
     orderBy: { onsetDate: "asc" },
     include: { attributions: { where: { rank: 1 }, include: { deploy: true } } },
   });
@@ -138,12 +138,12 @@ function seriesFor(totals: { date: string; service: Service; amountUsd: number }
     .sort((a, b) => b.total - a.total);
 }
 
-export async function getOverview(rangeDays: number) {
-  const totals = await loadDailyServiceTotals(db);
+export async function getOverview(orgId: string, rangeDays: number) {
+  const totals = await loadDailyServiceTotals(db, orgId);
   if (totals.length === 0) return null;
   const end = totals[totals.length - 1]!.date;
   const start = addDays(end, -(rangeDays - 1));
-  const anomalies = await anomalyRows();
+  const anomalies = await anomalyRows(orgId);
   const inRange = anomalies.filter((a) => a.onsetDate >= start);
 
   const sumBetween = (from: string, to: string) => totals.filter((t) => t.date >= from && t.date <= to).reduce((s, t) => s + t.amountUsd, 0);
@@ -171,19 +171,19 @@ export async function getOverview(rangeDays: number) {
   };
 }
 
-export async function getAnomaly(id: string) {
-  const a = await db.costAnomaly.findUnique({
-    where: { id },
+export async function getAnomaly(orgId: string, id: string) {
+  const a = await db.costAnomaly.findFirst({
+    where: { id, orgId },
     include: { attributions: { orderBy: { rank: "asc" }, include: { deploy: { include: { files: true } } } } },
   });
   if (!a) return null;
-  const [row] = await anomalyRows({ id });
+  const [row] = await anomalyRows(orgId, { id });
   const onset = iso(a.onsetDate);
-  const totals = (await loadDailyServiceTotals(db)).filter((t) => t.service === a.service);
+  const totals = (await loadDailyServiceTotals(db, orgId)).filter((t) => t.service === a.service);
   const start = addDays(onset, -28);
   const endCut = addDays(onset, 21);
   const points = totals.filter((t) => t.date >= start && t.date <= endCut).map((t) => ({ date: t.date, usd: t.amountUsd }));
-  const others = (await anomalyRows({ service: a.service })).filter((o) => o.onsetDate >= start && o.onsetDate <= endCut);
+  const others = (await anomalyRows(orgId, { service: a.service })).filter((o) => o.onsetDate >= start && o.onsetDate <= endCut);
 
   const suspects: Suspect[] = a.attributions.map((s) => ({
     rank: s.rank,
@@ -220,8 +220,9 @@ export interface ChangeSummary extends DeployRow {
   warnings: number;
 }
 
-export async function listChanges(): Promise<ChangeSummary[]> {
+export async function listChanges(orgId: string): Promise<ChangeSummary[]> {
   const rows = await db.deploy.findMany({
+    where: { orgId },
     orderBy: { mergedAt: "desc" },
     include: { files: true, attributions: { where: { rank: 1 }, include: { anomaly: true } } },
   });
@@ -243,9 +244,9 @@ export async function listChanges(): Promise<ChangeSummary[]> {
   });
 }
 
-export async function getChange(sha: string) {
+export async function getChange(orgId: string, sha: string) {
   const d = await db.deploy.findFirst({
-    where: { commitSha: { startsWith: sha } },
+    where: { orgId, commitSha: { startsWith: sha } },
     include: { files: true, attributions: { include: { anomaly: true }, orderBy: { confidence: "desc" } } },
   });
   if (!d) return null;

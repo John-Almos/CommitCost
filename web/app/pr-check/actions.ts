@@ -1,6 +1,7 @@
 "use server";
 
 import { renderComment, reviewFiles, type Warning } from "@commitcost/action";
+import { requireUser } from "@/lib/auth";
 import { parseGitDiff } from "@/lib/diffText";
 
 export interface CheckResult {
@@ -11,6 +12,7 @@ export interface CheckResult {
 }
 
 export async function checkDiff(_prev: CheckResult | null, form: FormData): Promise<CheckResult> {
+  await requireUser();
   const text = String(form.get("diff") ?? "");
   if (text.length > 2_000_000) return { files: [], warnings: [], comment: "", error: "Diff is too large (over 2 MB)." };
   const files = parseGitDiff(text);

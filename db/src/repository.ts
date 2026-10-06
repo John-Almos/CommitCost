@@ -12,11 +12,12 @@ function chunks<T>(items: T[], size = CHUNK): T[][] {
 }
 
 /** Idempotent: re-saving the same day/service/tag overwrites the amount. */
-export async function saveCostRecords(db: PrismaClient, records: CostRecord[]): Promise<number> {
+export async function saveCostRecords(db: PrismaClient, orgId: string, records: CostRecord[]): Promise<number> {
   for (const batch of chunks(records)) {
     await db.$transaction(
       batch.map((r) => {
         const key = {
+          orgId,
           date: parseIsoDate(r.date),
           provider: r.provider,
           accountId: r.accountId,
@@ -25,7 +26,7 @@ export async function saveCostRecords(db: PrismaClient, records: CostRecord[]): 
           tagValue: r.tagValue,
         };
         return db.costRecord.upsert({
-          where: { date_provider_accountId_service_tagKey_tagValue: key },
+          where: { orgId_date_provider_accountId_service_tagKey_tagValue: key },
           create: { ...key, amountUsd: r.amountUsd, source: r.source },
           update: { amountUsd: r.amountUsd, source: r.source, fetchedAt: new Date() },
         });
@@ -35,8 +36,8 @@ export async function saveCostRecords(db: PrismaClient, records: CostRecord[]): 
   return records.length;
 }
 
-/** Idempotent on (repo, commitSha). Files are replaced on re-save. */
-export async function saveDeploys(db: PrismaClient, deploys: Deploy[]): Promise<number> {
+/** Idempotent on (org, repo, commitSha). Files are replaced on re-save. */
+export async function saveDeploys(db: PrismaClient, orgId: string, deploys: Deploy[]): Promise<number> {
   for (const batch of chunks(deploys, 100)) {
     await db.$transaction(
       batch.map((d) => {
@@ -55,8 +56,8 @@ export async function saveDeploys(db: PrismaClient, deploys: Deploy[]): Promise<
           patch: f.patch ?? null,
         }));
         return db.deploy.upsert({
-          where: { repo_commitSha: { repo: d.repo, commitSha: d.commitSha } },
-          create: { repo: d.repo, commitSha: d.commitSha, ...data, files: { create: files } },
+          where: { orgId_repo_commitSha: { orgId, repo: d.repo, commitSha: d.commitSha } },
+          create: { orgId, repo: d.repo, commitSha: d.commitSha, ...data, files: { create: files } },
           update: { ...data, files: { deleteMany: {}, create: files } },
         });
       }),
@@ -65,12 +66,12 @@ export async function saveDeploys(db: PrismaClient, deploys: Deploy[]): Promise<
   return deploys.length;
 }
 
-/** Removes everything produced from mock mode so a re-seed starts clean. */
-export async function clearMockData(db: PrismaClient, mockRepo: string): Promise<void> {
+/** Removes an organization's cost, change and analysis data (not its connections). */
+export async function clearOrgData(db: PrismaClient, orgId: string): Promise<void> {
   await db.$transaction([
-    db.costAnomaly.deleteMany({}),
-    db.costRecord.deleteMany({ where: { source: "mock" } }),
-    db.deploy.deleteMany({ where: { repo: mockRepo } }),
+    db.costAnomaly.deleteMany({ where: { orgId } }),
+    db.costRecord.deleteMany({ where: { orgId } }),
+    db.deploy.deleteMany({ where: { orgId } }),
   ]);
 }
 
@@ -81,8 +82,9 @@ export interface DailyServiceTotal {
 }
 
 /** Sums tag-level rows into one total per day and service. */
-export async function loadDailyServiceTotals(db: PrismaClient): Promise<DailyServiceTotal[]> {
+export async function loadDailyServiceTotals(db: PrismaClient, orgId: string): Promise<DailyServiceTotal[]> {
   const rows = await db.costRecord.groupBy({
+    where: { orgId },
     by: ["date", "service"],
     _sum: { amountUsd: true },
     orderBy: [{ date: "asc" }, { service: "asc" }],
@@ -94,9 +96,9 @@ export async function loadDailyServiceTotals(db: PrismaClient): Promise<DailySer
   }));
 }
 
-export async function loadCostRecords(db: PrismaClient, range?: { start: string; end: string }): Promise<CostRecord[]> {
+export async function loadCostRecords(db: PrismaClient, orgId: string, range?: { start: string; end: string }): Promise<CostRecord[]> {
   const rows = await db.costRecord.findMany({
-    where: range ? { date: { gte: parseIsoDate(range.start), lte: parseIsoDate(range.end) } } : undefined,
+    where: { orgId, ...(range ? { date: { gte: parseIsoDate(range.start), lte: parseIsoDate(range.end) } } : {}) },
     orderBy: [{ date: "asc" }],
   });
   return rows.map((r) => ({
@@ -111,8 +113,8 @@ export async function loadCostRecords(db: PrismaClient, range?: { start: string;
   }));
 }
 
-export async function loadDeploys(db: PrismaClient, repo?: string): Promise<Deploy[]> {
-  const rows = await db.deploy.findMany({ where: repo ? { repo } : undefined, include: { files: true }, orderBy: { mergedAt: "asc" } });
+export async function loadDeploys(db: PrismaClient, orgId: string, repo?: string): Promise<Deploy[]> {
+  const rows = await db.deploy.findMany({ where: { orgId, ...(repo ? { repo } : {}) }, include: { files: true }, orderBy: { mergedAt: "asc" } });
   return rows.map((d) => ({
     repo: d.repo,
     commitSha: d.commitSha,
@@ -126,30 +128,32 @@ export async function loadDeploys(db: PrismaClient, repo?: string): Promise<Depl
   }));
 }
 
-/** Latest stored cost day for a source, so syncs can be incremental. */
-export async function latestCostDate(db: PrismaClient, source: CostRecord["source"]): Promise<string | null> {
-  const row = await db.costRecord.findFirst({ where: { source }, orderBy: { date: "desc" }, select: { date: true } });
+/** Latest stored cost day for a source (and account), so syncs can be incremental. */
+export async function latestCostDate(db: PrismaClient, orgId: string, source: CostRecord["source"], accountId?: string): Promise<string | null> {
+  const row = await db.costRecord.findFirst({ where: { orgId, source, ...(accountId ? { accountId } : {}) }, orderBy: { date: "desc" }, select: { date: true } });
   return row ? toIsoDate(row.date) : null;
 }
 
-export async function latestDeployDate(db: PrismaClient, repo: string): Promise<string | null> {
-  const row = await db.deploy.findFirst({ where: { repo }, orderBy: { mergedAt: "desc" }, select: { mergedAt: true } });
+export async function latestDeployDate(db: PrismaClient, orgId: string, repo: string): Promise<string | null> {
+  const row = await db.deploy.findFirst({ where: { orgId, repo }, orderBy: { mergedAt: "desc" }, select: { mergedAt: true } });
   return row ? toIsoDate(row.mergedAt) : null;
 }
 
 /**
- * Replaces stored analysis results. Anomalies are derived data, so each run
- * rewrites them rather than merging with the last run.
+ * Replaces an organization's stored analysis results. Anomalies are derived
+ * data, so each run rewrites them rather than merging with the last run.
  */
-export async function saveAnalysis(db: PrismaClient, reports: { anomaly: CostAnomaly; suspects: Attribution[] }[], repo: string, provider = "aws"): Promise<void> {
-  const deploys = await db.deploy.findMany({ where: { repo }, select: { id: true, commitSha: true } });
-  const deployId = new Map(deploys.map((d) => [d.commitSha, d.id]));
+export async function saveAnalysis(db: PrismaClient, orgId: string, reports: { anomaly: CostAnomaly; suspects: Attribution[] }[], provider = "aws"): Promise<void> {
+  const deploys = await db.deploy.findMany({ where: { orgId }, select: { id: true, repo: true, commitSha: true } });
+  const deployId = new Map(deploys.map((d) => [`${d.repo}@${d.commitSha}`, d.id]));
+  const idFor = (s: Attribution) => deployId.get(`${s.repo}@${s.commitSha}`);
 
   await db.$transaction(async (tx) => {
-    await tx.costAnomaly.deleteMany({ where: { provider } });
+    await tx.costAnomaly.deleteMany({ where: { orgId, provider } });
     for (const { anomaly: a, suspects } of reports) {
       await tx.costAnomaly.create({
         data: {
+          orgId,
           provider,
           service: a.service,
           tagValue: a.tagValue ?? "",
@@ -164,9 +168,9 @@ export async function saveAnalysis(db: PrismaClient, reports: { anomaly: CostAno
           estimatedMonthlyImpactUsd: a.estimatedMonthlyImpactUsd,
           attributions: {
             create: suspects
-              .filter((s) => deployId.has(s.commitSha))
+              .filter((s) => idFor(s))
               .map((s) => ({
-                deployId: deployId.get(s.commitSha)!,
+                deployId: idFor(s)!,
                 rank: s.rank,
                 confidence: s.confidence,
                 scores: s.scores as unknown as object,

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ServiceChart } from "@/components/ServiceChart";
 import { DirectionBadge, Diff, Meter, ShaLink, WarningCard } from "@/components/ui";
+import { requireWorkspace } from "@/lib/auth";
 import { getAnomaly } from "@/lib/data";
 import { SERVICE_NAMES, fmtDate, pct, usd, usdFull } from "@/lib/format";
 
@@ -9,7 +10,8 @@ export const dynamic = "force-dynamic";
 
 export default async function AnomalyPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const data = await getAnomaly(id);
+  const { org } = await requireWorkspace();
+  const data = await getAnomaly(org.id, id);
   if (!data) notFound();
   const { anomaly: a, suspects, series, topWarnings } = data;
   const top = suspects[0];
