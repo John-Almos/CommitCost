@@ -62,3 +62,47 @@ export const SERVICE_PROFILES: Record<KnownService, ServiceProfile> = {
     dailyGrowth: 0.0008,
   },
 };
+
+/**
+ * How each service/tag's baseline spend splits across usage types, as Cost
+ * Explorer reports them. Quantities are derived from these shares and the
+ * bundled list prices, so mock usage, mock cost and the price book agree.
+ */
+export const USAGE_MIX: Record<KnownService, Record<string, [usageType: string, share: number][]>> = {
+  EC2: {
+    api: [["BoxUsage:m6i.xlarge", 0.9], ["NatGateway-Hours", 0.02], ["NatGateway-Bytes", 0.08]],
+    worker: [["BoxUsage:m5.xlarge", 1]],
+    web: [["BoxUsage:t3.large", 1]],
+    "": [["EBS:VolumeUsage.gp3", 1]],
+  },
+  RDS: {
+    api: [["Multi-AZUsage:db.r6g.xl", 0.88], ["RDS:Multi-AZ-GP3-Storage", 0.12]],
+    worker: [["Multi-AZUsage:db.r6g.large", 0.85], ["RDS:Multi-AZ-GP3-Storage", 0.15]],
+  },
+  Lambda: {
+    worker: [["Lambda-GB-Second", 0.92], ["Request", 0.08]],
+    api: [["Lambda-GB-Second", 0.85], ["Request", 0.15]],
+  },
+  S3: {
+    api: [["TimedStorage-ByteHrs", 0.85], ["Requests-Tier2", 0.15]],
+    web: [["TimedStorage-ByteHrs", 0.7], ["Requests-Tier2", 0.3]],
+    "": [["TimedStorage-ByteHrs", 0.8], ["Requests-Tier1", 0.2]],
+  },
+  DynamoDB: {
+    api: [["ReadRequestUnits", 0.6], ["WriteRequestUnits", 0.4]],
+    worker: [["ReadRequestUnits", 0.3], ["WriteRequestUnits", 0.7]],
+  },
+  DataTransfer: {
+    api: [["DataTransfer-Out-Bytes", 0.6], ["DataTransfer-Regional-Bytes", 0.4]],
+    web: [["DataTransfer-Out-Bytes", 1]],
+    "": [["DataTransfer-Out-Bytes", 1]],
+  },
+};
+
+/** What the mock account pays vs list: a Compute Savings Plan covers EC2 instances. */
+export const EFFECTIVE_RATE: Record<string, number> = { "BoxUsage:": 0.85 };
+
+/** Free usage that still shows up in the bill: data written into the uploads bucket. */
+export const FREE_USAGE: { service: KnownService; tagValue: string; usageType: string; unit: string; dailyQuantity: number }[] = [
+  { service: "S3", tagValue: "", usageType: "DataTransfer-In-Bytes", unit: "GB", dailyQuantity: 3100 },
+];

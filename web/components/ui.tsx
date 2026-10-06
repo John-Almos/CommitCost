@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { Warning } from "@commitcost/action";
+import { BASIS_LABELS, INPUT_SOURCE_LABELS, formatInputValue, type CostEstimate } from "@commitcost/engine";
 import { pct, usd } from "@/lib/format";
 
 export function Meter({ value, label }: { value: number; label?: string }) {
@@ -60,7 +61,9 @@ export function WarningCard({ w, n }: { w: Warning; n: number }) {
         <strong>
           {n}. {w.title}
         </strong>
-        <span className="amount up-bad">{w.impact.monthlyUsd != null ? `~${usd(w.impact.monthlyUsd, { sign: true })}/mo` : "impact varies"}</span>
+        <span className="amount up-bad">
+          {w.impact.monthlyUsd != null ? `${w.impact.estimate.range?.lowUsd === 0 ? "≤" : "~"}${usd(w.impact.monthlyUsd, { sign: true })}/mo` : "impact varies"}
+        </span>
       </div>
       <div className="mono muted">
         {w.file}
@@ -69,10 +72,10 @@ export function WarningCard({ w, n }: { w: Warning; n: number }) {
       <dl className="kv">
         <dt>Why</dt>
         <dd>{w.why}</dd>
-        <dt>Rough impact</dt>
+        <dt>Estimated impact</dt>
         <dd>
-          {w.impact.summary}
-          {w.impact.assumptions && <span className="muted"> · Assumes: {w.impact.assumptions}</span>}
+          {w.impact.summary} <span className={`badge basis-${w.impact.estimate.basis}`}>{BASIS_LABELS[w.impact.estimate.basis]}</span>
+          <Calculation e={w.impact.estimate} />
         </dd>
         <dt>Suggested fix</dt>
         <dd>{w.suggestion}</dd>
@@ -92,5 +95,52 @@ export function ShaLink({ sha, prNumber, title }: { sha: string; prNumber: numbe
       {prNumber ? `#${prNumber} ` : ""}
       {title}
     </Link>
+  );
+}
+
+/** The formula, every input with where it came from, and the assumptions behind an estimate. */
+export function Calculation({ e, open = false }: { e: CostEstimate; open?: boolean }) {
+  if (e.inputs.length === 0 && e.assumptions.length === 0) return null;
+  return (
+    <details className="calc" open={open}>
+      <summary>How this was calculated</summary>
+      <div className="calc-formula mono">{e.formula}</div>
+      {e.calibration && (
+        <p className="calc-note">
+          {e.calibration.note} From the diff alone: {usd(e.calibration.diffOnlyMonthlyUsd, { sign: true })}/mo.
+        </p>
+      )}
+      <table className="calc-inputs">
+        <thead>
+          <tr>
+            <th>Input</th>
+            <th className="num">Value</th>
+            <th>Source</th>
+          </tr>
+        </thead>
+        <tbody>
+          {e.inputs.map((i, n) => (
+            <tr key={n}>
+              <td>{i.label}</td>
+              <td className="num mono">{formatInputValue(i)}</td>
+              <td>
+                <span className={`src src-${i.source}`}>{INPUT_SOURCE_LABELS[i.source]}</span>
+                {i.ref && <div className="muted calc-ref">{i.ref}</div>}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {e.assumptions.length > 0 && (
+        <ul className="calc-assumptions">
+          {e.assumptions.map((a, n) => (
+            <li key={n}>{a}</li>
+          ))}
+        </ul>
+      )}
+      <p className="muted calc-ref">
+        {e.region} · {e.priceSource}
+      </p>
+    </details>
   );
 }

@@ -1,5 +1,16 @@
 import type { Service } from "@commitcost/core";
-import { analyzeFile, estimateImpact, type DiffFinding, type FileDiff, type ImpactContext, type ImpactEstimate } from "@commitcost/engine";
+import {
+  BASIS_LABELS,
+  INPUT_SOURCE_LABELS,
+  analyzeFile,
+  estimateImpact,
+  formatInputValue,
+  toCostContext,
+  type CostContextInput,
+  type DiffFinding,
+  type FileDiff,
+  type ImpactEstimate,
+} from "@commitcost/engine";
 
 export const COMMENT_MARKER = "<!-- commitcost:pr-cost-review -->";
 
@@ -10,6 +21,8 @@ export interface Warning extends DiffFinding {
 export interface ReviewOptions {
   minConfidence: number;
   serviceSpend?: Partial<Record<Service, number>>;
+  /** Price book, region, usage profile and assumption overrides for the cost model. */
+  cost?: CostContextInput;
 }
 
 export const DEFAULT_REVIEW_OPTIONS: ReviewOptions = { minConfidence: 0.6 };
@@ -24,12 +37,12 @@ const SKIP = /(^|\/)(node_modules|vendor|dist|build|\.next|coverage)\/|\.(min\.j
  */
 export function reviewFiles(files: FileDiff[], options: Partial<ReviewOptions> = {}): Warning[] {
   const opts = { ...DEFAULT_REVIEW_OPTIONS, ...options };
-  const ctx: ImpactContext = { serviceSpend: opts.serviceSpend };
+  const ctx = toCostContext({ ...opts.cost, serviceSpend: opts.serviceSpend ?? opts.cost?.serviceSpend });
   return files
     .filter((f) => f.patch && !SKIP.test(f.path))
-    .flatMap((f) => analyzeFile(f))
-    .filter((f) => f.direction === "increase" && f.confidence >= opts.minConfidence)
-    .map((f) => ({ ...f, impact: estimateImpact(f, ctx) }))
+    .flatMap((f) => analyzeFile(f).map((finding) => ({ finding, patch: f.patch })))
+    .filter(({ finding }) => finding.direction === "increase" && finding.confidence >= opts.minConfidence)
+    .map(({ finding, patch }) => ({ ...finding, impact: estimateImpact(finding, ctx, patch) }))
     .sort((a, b) => (b.impact.monthlyUsd ?? 0) - (a.impact.monthlyUsd ?? 0) || b.confidence - a.confidence);
 }
 
@@ -61,8 +74,9 @@ export function renderComment(warnings: Warning[], ctx: CommentContext): string 
       "",
       `**Why it costs money:** ${w.why}`,
       "",
-      `**Rough impact:** ${w.impact.summary}${w.impact.assumptions ? `. _Assumes: ${w.impact.assumptions}_` : ""}`,
+      `**Estimated impact:** ${w.impact.summary} _(${BASIS_LABELS[w.impact.estimate.basis]})_`,
       "",
+      ...renderCalculation(w),
       `**Suggested fix:** ${w.suggestion}`,
       "",
       "```diff",
@@ -77,12 +91,40 @@ export function renderComment(warnings: Warning[], ctx: CommentContext): string 
     COMMENT_MARKER,
     `### 💸 CommitCost: ${warnings.length} possible cost increase${warnings.length === 1 ? "" : "s"} in this PR`,
     "",
-    "| # | Change | Where | Rough impact | Confidence |",
+    "| # | Change | Where | Estimated impact | Confidence |",
     "|---|---|---|---|---|",
     ...rows,
     "",
     ...details,
     "",
-    `<sub>Checked ${short}. Estimates are order-of-magnitude at us-east-1 on-demand prices. This comment updates on every push.</sub>`,
+    `<sub>Checked ${short}. ${pricingNote(warnings)} This comment updates on every push.</sub>`,
   ].join("\n");
+}
+
+/** The formula, its inputs with their sources, and the assumptions, folded away under the estimate. */
+function renderCalculation(w: Warning): string[] {
+  const e = w.impact.estimate;
+  if (e.inputs.length === 0 && e.assumptions.length === 0) return [];
+  const rows = e.inputs.map((i) => `| ${i.label} | ${formatInputValue(i)} | ${INPUT_SOURCE_LABELS[i.source]}${i.ref ? ` <sub>${i.ref}</sub>` : ""} |`);
+  return [
+    "<details><summary>How this was calculated</summary>",
+    "",
+    `\`${e.formula}\``,
+    "",
+    "| Input | Value | Source |",
+    "|---|---|---|",
+    ...rows,
+    "",
+    ...(e.calibration ? [`> ${e.calibration.note} From the diff alone: ${e.calibration.diffOnlyMonthlyUsd >= 0 ? "+" : ""}$${Math.round(e.calibration.diffOnlyMonthlyUsd).toLocaleString("en-US")}/month.`, ""] : []),
+    ...(e.assumptions.length ? ["Assumptions:", ...e.assumptions.map((a) => `- ${a}`), ""] : []),
+    "</details>",
+    "",
+  ];
+}
+
+function pricingNote(warnings: Warning[]): string {
+  const e = warnings[0]?.impact.estimate;
+  if (!e) return "";
+  const calibrated = warnings.some((w) => w.impact.estimate.basis === "usage-calibrated");
+  return `Prices: ${e.priceSource}, ${e.region}.${calibrated ? " Volumes calibrated with your bill." : " No usage data was provided, so volumes come from the diff or stated defaults."}`;
 }

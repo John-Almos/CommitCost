@@ -14,6 +14,15 @@ inputs:
   service-spend:
     description: "Optional JSON of current monthly spend per service, e.g. {\"Lambda\":900,\"EC2\":4200}, used to bound estimates."
     default: ""
+  region:
+    description: "AWS region for resources whose diff doesn't name one. Defaults to the cost profile's main region, else us-east-1."
+    default: ""
+  cost-profile:
+    description: "Path to a cost profile JSON exported with `npm run profile` (your measured usage and effective rates), used to calibrate estimates with your bill."
+    default: ""
+  assumptions:
+    description: "Optional JSON overriding the cost model's defaults, e.g. {\"cacheHitRate\":0.9,\"requestsPerMonth\":30000000}."
+    default: ""
   dry-run:
     description: "When \"true\", writes the review to the job summary only and never comments."
     default: "false"

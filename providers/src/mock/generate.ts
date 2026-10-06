@@ -1,8 +1,9 @@
-import type { CostRecord, Deploy, IsoDate, Service } from "@commitcost/core";
+import type { CostRecord, Deploy, IsoDate, Service, UsageRecord } from "@commitcost/core";
 import { SERVICES, addDays, dateRange, isWeekend, toIsoDate } from "@commitcost/core";
 import { AUTHORS, randomFillerChange } from "./commits.js";
 import { SERVICE_PROFILES, TAG_KEY } from "./profiles.js";
 import { Rng } from "./rng.js";
+import { buildUsage, type CostParts } from "./usage.js";
 import {
   DECOYS,
   INJECTED_CHANGES,
@@ -50,6 +51,8 @@ export interface MockDataset {
   start: IsoDate;
   end: IsoDate;
   costs: CostRecord[];
+  /** The same spend by usage type, with quantities: what Cost Explorer returns grouped by USAGE_TYPE and tag. */
+  usage: UsageRecord[];
   deploys: Deploy[];
   /** Cost changes caused by a specific commit, in onset order. */
   spikes: InjectedSpike[];
@@ -94,7 +97,8 @@ export function generateMockDataset(options: MockOptions = {}): MockDataset {
   const root = new Rng(seed);
   const deploys = buildHistory(root.fork("history"), dates, offset);
   const spikes = buildSpikeTruth(deploys.injected, dates, offset);
-  const costs = buildCosts(root.fork("costs"), dates, offset);
+  const { records: costs, parts } = buildCosts(root.fork("costs"), dates, offset);
+  const usage = buildUsage(costs, parts);
 
   return {
     seed,
@@ -102,6 +106,7 @@ export function generateMockDataset(options: MockOptions = {}): MockDataset {
     start,
     end,
     costs,
+    usage,
     deploys: deploys.all,
     spikes,
     unexplained: UNEXPLAINED_EVENTS.map((e) => ({
@@ -115,8 +120,9 @@ export function generateMockDataset(options: MockOptions = {}): MockDataset {
   };
 }
 
-function buildCosts(rng: Rng, dates: IsoDate[], offset: number): CostRecord[] {
+function buildCosts(rng: Rng, dates: IsoDate[], offset: number): { records: CostRecord[]; parts: CostParts[] } {
   const records: CostRecord[] = [];
+  const parts: CostParts[] = [];
   dates.forEach((date, i) => {
     const weekend = isWeekend(date);
     for (const service of SERVICES) {
@@ -126,21 +132,28 @@ function buildCosts(rng: Rng, dates: IsoDate[], offset: number): CostRecord[] {
 
       for (const [tagValue, share] of Object.entries(profile.tagShares)) {
         let amount = profile.baseDailyUsd * share * seasonal * growth;
+        const part: CostParts = { base: amount, extra: [] };
 
         for (const change of INJECTED_CHANGES) {
           for (const effect of change.effects) {
             if (effect.service !== service || effect.tagValue !== tagValue) continue;
             const progress = effectProgress(i, change.onsetDay + offset, effect.rampDays);
-            amount += effect.dailyDeltaUsd * progress * (effect.followsTraffic ? seasonal : 1);
+            const delta = effect.dailyDeltaUsd * progress * (effect.followsTraffic ? seasonal : 1);
+            amount += delta;
+            if (progress > 0) part.extra.push({ usageType: effect.usageType, usd: delta, replaces: effect.replacesUsageType });
           }
         }
         for (const event of UNEXPLAINED_EVENTS) {
           if (event.service === service && event.tagValue === tagValue && event.day + offset === i) {
             amount += event.deltaUsd;
+            part.extra.push({ usageType: event.usageType, usd: event.deltaUsd });
           }
         }
 
+        const expected = amount;
         amount *= 1 + profile.noise * rng.gaussian();
+        part.scale = expected > 0 ? Math.max(0, amount) / expected : 0;
+        parts.push(part);
         records.push({
           date,
           provider: "aws",
@@ -154,7 +167,7 @@ function buildCosts(rng: Rng, dates: IsoDate[], offset: number): CostRecord[] {
       }
     }
   });
-  return records;
+  return { records, parts };
 }
 
 interface PendingDeploy extends Omit<Deploy, "prNumber" | "url" | "commitSha" | "repo"> {

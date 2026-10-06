@@ -1,7 +1,9 @@
 import { resolve } from "node:path";
 import { addDays, toIsoDate } from "@commitcost/core";
-import { latestCostDate, latestDeployDate, saveCostRecords, saveDeploys, type PrismaClient } from "@commitcost/db";
-import { AwsCostExplorerProvider, FileCache, GitHubProvider } from "@commitcost/providers";
+import { latestCostDate, latestDeployDate, saveCostRecords, saveDeploys, saveUsageRecords, type PrismaClient } from "@commitcost/db";
+import { writeLocalPrices } from "@commitcost/db";
+import { stripRegionPrefix } from "@commitcost/engine";
+import { AwsCostExplorerProvider, AwsPriceList, FileCache, GitHubProvider } from "@commitcost/providers";
 import type { SyncConfig } from "./config.js";
 
 /** Cost Explorer revises the last few days; always re-fetch them. */
@@ -22,7 +24,20 @@ export async function sync(db: PrismaClient, config: SyncConfig, cacheDir: strin
   log(`AWS: fetching daily costs ${costStart} → ${end}${config.aws.tagKey ? ` grouped by tag "${config.aws.tagKey}"` : ""}...`);
   const costs = await aws.getDailyCosts({ start: costStart, end });
   await saveCostRecords(db, costs);
-  log(`AWS: stored ${costs.length} cost records (${aws.requestCount} Cost Explorer request${aws.requestCount === 1 ? "" : "s"}, about $${(aws.requestCount * 0.01).toFixed(2)}).`);
+  log(`AWS: fetching usage by usage type ${costStart} → ${end} (volumes and effective rates for the cost model)...`);
+  const usage = await aws.getUsage({ start: costStart, end });
+  await saveUsageRecords(db, usage);
+  log(`AWS: stored ${costs.length} cost records and ${usage.length} usage records (${aws.requestCount} Cost Explorer request${aws.requestCount === 1 ? "" : "s"}, about $${(aws.requestCount * 0.01).toFixed(2)}).`);
+
+  if (config.pricing === "live") {
+    // Price the regions you actually use, from the Price List API (pricing:GetProducts).
+    const regions = [...new Set(usage.map((u) => stripRegionPrefix(u.usageType).region ?? "us-east-1"))];
+    const priceList = new AwsPriceList({ cache: new FileCache(resolve(cacheDir, "price-list")) });
+    log(`AWS: loading list prices for ${regions.join(", ")} from the Price List API...`);
+    const book = await priceList.priceBook(regions.length ? regions : ["us-east-1"]);
+    writeLocalPrices(book.snapshot);
+    log(`AWS: saved prices for ${regions.length} region${regions.length === 1 ? "" : "s"} (${priceList.requestCount} Price List requests, free).`);
+  }
 
   const lastDeploy = await latestDeployDate(db, config.github.repo);
   const deployStart = lastDeploy && lastDeploy >= fullStart ? addDays(lastDeploy, -1) : fullStart;
@@ -32,5 +47,5 @@ export async function sync(db: PrismaClient, config: SyncConfig, cacheDir: strin
   await saveDeploys(db, deploys);
   log(`GitHub: stored ${deploys.length} deploys (${github.client.requestCount} API requests).`);
 
-  return { costs: costs.length, deploys: deploys.length, start: fullStart, end };
+  return { costs: costs.length, usage: usage.length, deploys: deploys.length, start: fullStart, end };
 }

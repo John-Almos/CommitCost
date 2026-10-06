@@ -1,6 +1,8 @@
-import type { Service } from "@commitcost/core";
+import type { Service, UsageRecord } from "@commitcost/core";
 import { loadDailyServiceTotals } from "@commitcost/db";
 import { reviewFiles, type Warning } from "@commitcost/action";
+import { BASIS_LABELS, describeUsageType, priceDeploy, totalMonthly, type CostEstimate } from "@commitcost/engine";
+import { contextAt, priceBook, usageRecords } from "./cost";
 import { db } from "./db";
 
 export interface Point {
@@ -195,7 +197,10 @@ export async function getAnomaly(id: string) {
     monthlyImpactUsd: s.estimatedMonthlyImpactUsd,
     deploy: toDeploy(s.deploy),
   }));
-  const topWarnings = suspects[0] ? warningsFor(suspects[0].deploy) : [];
+  const usage = await usageRecords();
+  const topWarnings = suspects[0] ? warningsFor(suspects[0].deploy, usage) : [];
+  const billChanges = usageChanges(usage, a.service, a.tagValue, onset);
+  const modeled = suspects[0] ? modeledImpact(suspects[0].deploy, usage, a.service as Service) : undefined;
 
   return {
     anomaly: row!,
@@ -207,12 +212,67 @@ export async function getAnomaly(id: string) {
     } satisfies ServiceSeries,
     suspects,
     topWarnings,
+    billChanges,
+    modeled,
   };
 }
 
-/** The pre-merge review the GitHub Action would have posted on this PR. */
-export function warningsFor(d: DeployRow): Warning[] {
-  return reviewFiles(d.files.map((f) => ({ path: f.path, patch: f.patch ?? undefined })));
+export interface ModeledImpact {
+  monthlyUsd?: number;
+  items: { title: string; estimate: CostEstimate }[];
+}
+
+/** The cost model's estimate for a change's findings on one service, increases and decreases, as of the day before it merged. */
+export function modeledImpact(d: DeployRow, usage: UsageRecord[], service: Service | Service[]): ModeledImpact {
+  const services = Array.isArray(service) ? service : [service];
+  const { priced } = priceDeploy({ mergedAt: d.mergedAt, files: d.files.map((f) => ({ ...f, patch: f.patch ?? undefined })) }, usage, priceBook());
+  const relevant = priced.filter((p) => p.finding.services.some((s) => services.includes(s)));
+  return { monthlyUsd: totalMonthly(relevant), items: relevant.map((p) => ({ title: p.finding.title, estimate: p.estimate })) };
+}
+
+export interface UsageChange {
+  usageType: string;
+  description: string;
+  unit: string;
+  /** Daily averages over the 7 days before onset and the 7 days from onset. */
+  beforeQty: number;
+  afterQty: number;
+  beforeUsd: number;
+  afterUsd: number;
+}
+
+/** Which usage types moved at the anomaly: what the bill says changed, in units as well as dollars. */
+export function usageChanges(usage: UsageRecord[], service: string, tagValue: string, onset: string, days = 7): UsageChange[] {
+  const before = { start: addDays(onset, -days), end: addDays(onset, -1) };
+  const after = { start: onset, end: addDays(onset, days - 1) };
+  const rows = new Map<string, UsageChange>();
+  for (const r of usage) {
+    if (r.service !== service || (tagValue && r.tagValue !== tagValue)) continue;
+    const side = r.date >= before.start && r.date <= before.end ? "before" : r.date >= after.start && r.date <= after.end ? "after" : null;
+    if (!side) continue;
+    const row = rows.get(r.usageType) ?? { usageType: r.usageType, description: describeUsageType(r.usageType), unit: r.unit, beforeQty: 0, afterQty: 0, beforeUsd: 0, afterUsd: 0 };
+    if (side === "before") {
+      row.beforeQty += r.quantity / days;
+      row.beforeUsd += r.costUsd / days;
+    } else {
+      row.afterQty += r.quantity / days;
+      row.afterUsd += r.costUsd / days;
+    }
+    rows.set(r.usageType, row);
+  }
+  return [...rows.values()].filter((r) => Math.abs(r.afterUsd - r.beforeUsd) >= 0.5).sort((a, b) => Math.abs(b.afterUsd - b.beforeUsd) - Math.abs(a.afterUsd - a.beforeUsd));
+}
+
+/**
+ * The pre-merge review the GitHub Action would have posted on this PR, priced
+ * with the two weeks of usage before it merged (so its own effect isn't an input).
+ */
+export function warningsFor(d: DeployRow, usage?: UsageRecord[]): Warning[] {
+  const ctx = usage ? contextAt(usage, addDays(d.mergedAt.slice(0, 10), -1)) : undefined;
+  return reviewFiles(
+    d.files.map((f) => ({ path: f.path, patch: f.patch ?? undefined })),
+    ctx ? { cost: { prices: ctx.prices, usage: ctx.usage } } : {},
+  );
 }
 
 export interface ChangeSummary extends DeployRow {
@@ -252,7 +312,7 @@ export async function getChange(sha: string) {
   const deploy = toDeploy(d);
   return {
     deploy,
-    warnings: warningsFor(deploy),
+    warnings: warningsFor(deploy, await usageRecords()),
     attributions: d.attributions.map((t) => ({
       anomalyId: t.anomalyId,
       service: t.anomaly.service as Service,
@@ -265,4 +325,57 @@ export async function getChange(sha: string) {
       monthlyImpactUsd: t.estimatedMonthlyImpactUsd,
     })),
   };
+}
+
+export interface CalibrationRow {
+  anomalyId: string;
+  services: Service[];
+  onsetDate: string;
+  title: string;
+  prNumber: number | null;
+  modeledUsd?: number;
+  upperBound: boolean;
+  measuredUsd: number;
+  basis: string;
+}
+
+/**
+ * For every confidently attributed, persistent change: the cost model's
+ * estimate next to the bill's measurement. A change that moved several
+ * services (replication: transfer and storage) is one row with both summed.
+ */
+export async function listCalibration(): Promise<CalibrationRow[]> {
+  const rows = await db.costAnomaly.findMany({
+    where: { persistent: true },
+    orderBy: { onsetDate: "asc" },
+    include: { attributions: { where: { rank: 1, confidence: { gte: 0.4 } }, include: { deploy: { include: { files: true } } } } },
+  });
+  const usage = await usageRecords();
+  if (usage.length === 0) return [];
+  const byDeploy = new Map<string, { anomalies: typeof rows; deploy: DeployRow }>();
+  for (const a of rows) {
+    const top = a.attributions[0];
+    if (!top) continue;
+    const g = byDeploy.get(top.deploy.commitSha) ?? { anomalies: [], deploy: toDeploy(top.deploy) };
+    g.anomalies.push(a);
+    byDeploy.set(top.deploy.commitSha, g);
+  }
+  return [...byDeploy.values()].flatMap(({ anomalies, deploy }) => {
+    const services = [...new Set(anomalies.map((a) => a.service as Service))];
+    const m = modeledImpact(deploy, usage, services);
+    if (m.items.length === 0) return [];
+    return [
+      {
+        anomalyId: anomalies[0]!.id,
+        services,
+        onsetDate: iso(anomalies[0]!.onsetDate),
+        title: deploy.title,
+        prNumber: deploy.prNumber,
+        modeledUsd: m.monthlyUsd,
+        upperBound: m.items.some((i) => i.estimate.range?.lowUsd === 0),
+        measuredUsd: anomalies.reduce((s, a) => s + a.estimatedMonthlyImpactUsd, 0),
+        basis: [...new Set(m.items.map((i) => BASIS_LABELS[i.estimate.basis]))].join(", "),
+      },
+    ];
+  });
 }

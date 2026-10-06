@@ -116,4 +116,27 @@ describe("AwsCostExplorerProvider", () => {
     await provider.getDailyCosts(settled);
     expect(provider.requestCount).toBe(6); // settled entry still cached
   });
+
+  it("fetches usage by usage type per service, with quantity and cost", async () => {
+    const inputs: GetCostAndUsageCommand["input"][] = [];
+    const client: CostExplorerLike = {
+      async send(command) {
+        inputs.push(command.input);
+        const services = command.input.Filter?.Dimensions?.Values ?? [];
+        const groups = services.includes("AWS Lambda")
+          ? [{ Keys: ["USE1-Lambda-GB-Second", "app$worker"], Metrics: { UsageQuantity: { Amount: "1000000", Unit: "Lambda-GB-Second" }, UnblendedCost: { Amount: "16.67", Unit: "USD" } } }]
+          : services.includes("AWS Data Transfer")
+            ? [{ Keys: ["USE1-USW2-AWS-Out-Bytes", "app$"], Metrics: { UsageQuantity: { Amount: "500", Unit: "GB" }, UnblendedCost: { Amount: "10", Unit: "USD" } } }]
+            : [];
+        return { $metadata: {}, ResultsByTime: [{ TimePeriod: { Start: "2026-09-01", End: "2026-09-02" }, Groups: groups }] };
+      },
+    };
+    const usage = await new AwsCostExplorerProvider({ client, tagKey: "app" }).getUsage({ start: "2026-09-01", end: "2026-09-01" });
+    expect(inputs[0]).toMatchObject({ Metrics: ["UsageQuantity", "UnblendedCost"], GroupBy: [{ Type: "DIMENSION", Key: "USAGE_TYPE" }, { Type: "TAG", Key: "app" }] });
+    expect(inputs.every((i) => i.Filter?.Dimensions?.Key === "SERVICE")).toBe(true);
+    expect(usage).toEqual([
+      expect.objectContaining({ service: "DataTransfer", usageType: "USE1-USW2-AWS-Out-Bytes", tagValue: "", unit: "GB", quantity: 500, costUsd: 10 }),
+      expect.objectContaining({ service: "Lambda", usageType: "USE1-Lambda-GB-Second", tagValue: "worker", unit: "Lambda-GB-Second", quantity: 1_000_000, costUsd: 16.67 }),
+    ]);
+  });
 });

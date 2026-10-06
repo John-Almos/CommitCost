@@ -12,6 +12,8 @@ export interface SyncConfig {
   days: number;
   github: { token: string; repo: string; branch?: string };
   aws: { tagKey?: string; metric: CostMetric; accountId?: string };
+  /** "live" fetches current list prices from the AWS Price List API on sync; "snapshot" uses the bundled prices. */
+  pricing: "live" | "snapshot";
 }
 
 const METRICS: CostMetric[] = ["UnblendedCost", "AmortizedCost", "NetUnblendedCost", "NetAmortizedCost"];
@@ -28,8 +30,12 @@ export function readSyncConfig(env: NodeJS.ProcessEnv = process.env): SyncConfig
   const days = Number(env.COMMITCOST_DAYS ?? 90);
   if (!Number.isInteger(days) || days < 21 || days > 365) throw new Error("COMMITCOST_DAYS must be a whole number between 21 and 365");
 
+  const pricing = (env.COMMITCOST_PRICING ?? "snapshot").toLowerCase();
+  if (pricing !== "live" && pricing !== "snapshot") throw new Error('COMMITCOST_PRICING must be "live" or "snapshot"');
+
   return {
     days,
+    pricing,
     github: { token: env.GITHUB_TOKEN!, repo: env.GITHUB_REPO!, branch: env.GITHUB_BRANCH || undefined },
     aws: { tagKey: env.COMMITCOST_TAG_KEY || undefined, metric, accountId: env.COMMITCOST_AWS_ACCOUNT_ID || undefined },
   };

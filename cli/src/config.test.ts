@@ -10,6 +10,7 @@ describe("readSyncConfig", () => {
     const config = readSyncConfig({ GITHUB_TOKEN: "ghp_x", GITHUB_REPO: "acme/app", COMMITCOST_TAG_KEY: "app", COMMITCOST_DAYS: "60" });
     expect(config).toEqual({
       days: 60,
+      pricing: "snapshot",
       github: { token: "ghp_x", repo: "acme/app", branch: undefined },
       aws: { tagKey: "app", metric: "UnblendedCost", accountId: undefined },
     });
@@ -19,5 +20,7 @@ describe("readSyncConfig", () => {
     const base = { GITHUB_TOKEN: "t", GITHUB_REPO: "a/b" };
     expect(() => readSyncConfig({ ...base, COMMITCOST_COST_METRIC: "BlendedCost" })).toThrow(/COMMITCOST_COST_METRIC/);
     expect(() => readSyncConfig({ ...base, COMMITCOST_DAYS: "5" })).toThrow(/COMMITCOST_DAYS/);
+    expect(() => readSyncConfig({ ...base, COMMITCOST_PRICING: "cheap" })).toThrow(/COMMITCOST_PRICING/);
+    expect(readSyncConfig({ ...base, COMMITCOST_PRICING: "live" }).pricing).toBe("live");
   });
 });

@@ -1,4 +1,4 @@
-import type { Attribution, CostAnomaly, CostRecord, Deploy, Service } from "@commitcost/core";
+import type { Attribution, CostAnomaly, CostRecord, Deploy, Service, UsageRecord } from "@commitcost/core";
 import { parseIsoDate, toIsoDate } from "@commitcost/core";
 import type { PrismaClient } from "@prisma/client";
 
@@ -33,6 +33,55 @@ export async function saveCostRecords(db: PrismaClient, records: CostRecord[]): 
     );
   }
   return records.length;
+}
+
+/**
+ * Replaces stored usage for the days and sources in `records`, so a re-sync
+ * of overlapping days overwrites rather than duplicates.
+ */
+export async function saveUsageRecords(db: PrismaClient, records: UsageRecord[]): Promise<number> {
+  if (records.length === 0) return 0;
+  const dates = records.map((r) => r.date).sort();
+  const sources = [...new Set(records.map((r) => r.source))];
+  await db.usageRecord.deleteMany({ where: { source: { in: sources }, date: { gte: parseIsoDate(dates[0]!), lte: parseIsoDate(dates[dates.length - 1]!) } } });
+  for (const batch of chunks(records, 1000)) {
+    await db.usageRecord.createMany({
+      data: batch.map((r) => ({
+        date: parseIsoDate(r.date),
+        provider: r.provider,
+        accountId: r.accountId,
+        service: r.service,
+        usageType: r.usageType,
+        tagKey: r.tagKey,
+        tagValue: r.tagValue,
+        unit: r.unit,
+        quantity: r.quantity,
+        costUsd: r.costUsd,
+        source: r.source,
+      })),
+    });
+  }
+  return records.length;
+}
+
+export async function loadUsageRecords(db: PrismaClient, range?: { start: string; end: string }): Promise<UsageRecord[]> {
+  const rows = await db.usageRecord.findMany({
+    where: range ? { date: { gte: parseIsoDate(range.start), lte: parseIsoDate(range.end) } } : undefined,
+    orderBy: [{ date: "asc" }],
+  });
+  return rows.map((r) => ({
+    date: toIsoDate(r.date),
+    provider: r.provider as UsageRecord["provider"],
+    accountId: r.accountId,
+    service: r.service as Service,
+    usageType: r.usageType,
+    tagKey: r.tagKey,
+    tagValue: r.tagValue,
+    unit: r.unit,
+    quantity: r.quantity,
+    costUsd: r.costUsd,
+    source: r.source as UsageRecord["source"],
+  }));
 }
 
 /** Idempotent on (repo, commitSha). Files are replaced on re-save. */
@@ -70,6 +119,7 @@ export async function clearMockData(db: PrismaClient, mockRepo: string): Promise
   await db.$transaction([
     db.costAnomaly.deleteMany({}),
     db.costRecord.deleteMany({ where: { source: "mock" } }),
+    db.usageRecord.deleteMany({ where: { source: "mock" } }),
     db.deploy.deleteMany({ where: { repo: mockRepo } }),
   ]);
 }
