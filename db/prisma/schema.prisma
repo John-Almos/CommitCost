@@ -33,6 +33,29 @@ model CostRecord {
   @@index([service, date])
 }
 
+/// Usage quantity and cost for one usage type, day and tag value: Cost
+/// Explorer grouped by USAGE_TYPE (and tag). Gives the cost model real
+/// volumes (instance hours, GB per network path, GB-seconds) and the rate
+/// actually paid per unit, discounts included.
+model UsageRecord {
+  id        String   @id @default(cuid())
+  date      DateTime // midnight UTC of the billing day
+  provider  String
+  accountId String
+  service   String   // normalized, as on CostRecord
+  usageType String   // as billed, region prefix included, e.g. "USW2-BoxUsage:m5.large"
+  tagKey    String   @default("")
+  tagValue  String   @default("")
+  unit      String   // "Hrs", "GB", "GB-Mo", "Requests", ...
+  quantity  Float
+  costUsd   Float
+  source    String   // "mock" | "aws-cost-explorer"
+  fetchedAt DateTime @default(now())
+
+  @@unique([date, provider, accountId, service, usageType, tagKey, tagValue])
+  @@index([service, date])
+}
+
 /// A change that reached the default branch (merged PR or direct push).
 model Deploy {
   id        String       @id @default(cuid())

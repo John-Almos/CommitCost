@@ -5,10 +5,10 @@ import {
   type GetCostAndUsageCommandOutput,
   type GroupDefinition,
 } from "@aws-sdk/client-cost-explorer";
-import type { CostProvider, CostRecord, DateRange, IsoDate } from "@commitcost/core";
+import type { CostProvider, CostRecord, DateRange, IsoDate, Service, UsageProvider, UsageRecord } from "@commitcost/core";
 import { addDays, toIsoDate } from "@commitcost/core";
 import type { FileCache } from "../cache/fileCache.js";
-import { mapAwsService } from "./services.js";
+import { awsServiceNamesBy, mapAwsService } from "./services.js";
 
 export type CostMetric = "UnblendedCost" | "AmortizedCost" | "NetUnblendedCost" | "NetAmortizedCost";
 
@@ -39,7 +39,7 @@ const RECENT_TTL_MS = 6 * 60 * 60 * 1000;
  * AWS chain (env vars, profile, SSO, instance role). Only needs
  * `ce:GetCostAndUsage`.
  */
-export class AwsCostExplorerProvider implements CostProvider {
+export class AwsCostExplorerProvider implements CostProvider, UsageProvider {
   readonly name = "aws-cost-explorer";
   private readonly client: CostExplorerLike;
   private readonly metric: CostMetric;
@@ -68,6 +68,59 @@ export class AwsCostExplorerProvider implements CostProvider {
 
     const pages = await this.fetchAllPages(input);
     return this.toRecords(pages);
+  }
+
+  /**
+   * Daily usage quantity and cost per usage type (and tag), for the cost
+   * model: instance hours, GB per network path, GB-seconds, request units.
+   * Cost Explorer allows two group-bys, so this makes one request per
+   * CommitCost service, filtered to the AWS services that roll up into it.
+   */
+  async getUsage(range: DateRange): Promise<UsageRecord[]> {
+    const out: UsageRecord[] = [];
+    for (const [service, names] of awsServiceNamesBy()) {
+      const groupBy: GroupDefinition[] = [{ Type: "DIMENSION", Key: "USAGE_TYPE" }];
+      if (this.options.tagKey) groupBy.push({ Type: "TAG", Key: this.options.tagKey });
+      const pages = await this.fetchAllPages({
+        TimePeriod: { Start: range.start, End: addDays(range.end, 1) },
+        Granularity: "DAILY",
+        Metrics: ["UsageQuantity", this.metric],
+        GroupBy: groupBy,
+        Filter: { Dimensions: { Key: "SERVICE", Values: names } },
+      });
+      out.push(...this.toUsage(pages, service));
+    }
+    return out.sort((a, b) => a.date.localeCompare(b.date) || a.service.localeCompare(b.service) || a.usageType.localeCompare(b.usageType));
+  }
+
+  private toUsage(pages: GetCostAndUsageCommandOutput[], service: Service): UsageRecord[] {
+    const out: UsageRecord[] = [];
+    for (const page of pages) {
+      for (const result of page.ResultsByTime ?? []) {
+        const date = result.TimePeriod?.Start;
+        if (!date) continue;
+        for (const group of result.Groups ?? []) {
+          const [usageType = "", tagPart] = group.Keys ?? [];
+          const quantity = Number(group.Metrics?.UsageQuantity?.Amount ?? 0);
+          const costUsd = Number(group.Metrics?.[this.metric]?.Amount ?? 0);
+          if (!Number.isFinite(quantity) || !Number.isFinite(costUsd) || (quantity === 0 && costUsd === 0)) continue;
+          out.push({
+            date,
+            provider: "aws",
+            accountId: this.options.accountId ?? "default",
+            service,
+            usageType,
+            tagKey: this.options.tagKey ?? "",
+            tagValue: tagPart ? tagPart.slice(tagPart.indexOf("$") + 1) : "",
+            unit: group.Metrics?.UsageQuantity?.Unit ?? "",
+            quantity,
+            costUsd,
+            source: "aws-cost-explorer",
+          });
+        }
+      }
+    }
+    return out;
   }
 
   private async fetchAllPages(input: GetCostAndUsageCommandInput): Promise<GetCostAndUsageCommandOutput[]> {

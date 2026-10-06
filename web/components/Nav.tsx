@@ -7,6 +7,7 @@ const LINKS = [
   { href: "/", label: "Overview", match: (p: string) => p === "/" || p.startsWith("/anomalies") },
   { href: "/changes", label: "Changes", match: (p: string) => p.startsWith("/changes") },
   { href: "/pr-check", label: "PR check", match: (p: string) => p.startsWith("/pr-check") },
+  { href: "/cost-model", label: "Cost model", match: (p: string) => p.startsWith("/cost-model") },
 ];
 
 export function Nav() {

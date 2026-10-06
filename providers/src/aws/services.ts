@@ -22,3 +22,11 @@ const EXACT: Record<string, Service> = {
 export function mapAwsService(name: string): Service {
   return EXACT[name] ?? "Other";
 }
+
+/** Cost Explorer SERVICE values that roll up into each CommitCost service, plus CloudWatch for log volumes. */
+export function awsServiceNamesBy(): Map<Service, string[]> {
+  const out = new Map<Service, string[]>();
+  for (const [name, service] of Object.entries(EXACT)) out.set(service, [...(out.get(service) ?? []), name]);
+  out.set("Other", ["AmazonCloudWatch"]);
+  return out;
+}

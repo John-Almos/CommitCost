@@ -1,6 +1,7 @@
 import { relative } from "node:path";
 import { SERVICES, type CostAnomaly } from "@commitcost/core";
 import { loadDailyServiceTotals, type PrismaClient } from "@commitcost/db";
+import { priceDeploy, totalMonthly } from "@commitcost/engine";
 import { runAnalysis } from "./analyzeCmd.js";
 import { bold, dim, green, red, renderReports, renderServiceCharts, renderSpikeTable, usd } from "./render.js";
 import { GROUND_TRUTH_PATH, seedMock } from "./seed.js";
@@ -57,6 +58,20 @@ export async function runDemo(db: PrismaClient): Promise<boolean> {
       : red(`✗ ${missed.length} of ${checks} injected changes not attributed correctly: ${missed.join(", ")}`),
   );
   console.log(blipOk ? green("✓ The crawler blip (no code cause) is reported with low confidence.") : red("✗ The no-cause blip was attributed with high confidence."));
+  console.log();
+  console.log(bold("Cost model check") + dim("  (estimate from the diff and the two weeks of usage before merge, vs the change measured in the bill)"));
+  for (const spike of dataset.spikes) {
+    const deploy = dataset.deploys.find((d) => d.commitSha === spike.commitSha)!;
+    const services = new Set(spike.effects.map((e) => e.service));
+    const priced = priceDeploy(deploy, dataset.usage).priced.filter((p) => p.finding.services.some((s) => services.has(s)));
+    const modeled = totalMonthly(priced);
+    const measured = spike.estimatedMonthlyImpactUsd;
+    const basis = [...new Set(priced.map((p) => p.estimate.basis))].join(", ");
+    const ratio = modeled !== undefined && measured !== 0 ? modeled / measured : undefined;
+    console.log(
+      `  ${spike.title.slice(0, 58).padEnd(58)} measured ${usd(measured).padStart(8)}/mo  modeled ${modeled !== undefined ? usd(modeled).padStart(8) : "       ?"}/mo ${dim(`${ratio !== undefined ? `${ratio.toFixed(2)}x` : ""} ${basis}`)}`,
+    );
+  }
   console.log();
   console.log(dim(`Ground truth: ${relative(process.cwd(), GROUND_TRUTH_PATH)}. Results are stored for the dashboard (npm run dashboard, http://localhost:3000).`));
   console.log();

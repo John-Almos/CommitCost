@@ -84,7 +84,7 @@ To use Postgres, run `npm run db:schema:postgres`, set `COMMITCOST_DATABASE_URL`
        {
          "Sid": "CommitCostReadOnlyCostExplorer",
          "Effect": "Allow",
-         "Action": ["ce:GetCostAndUsage"],
+         "Action": ["ce:GetCostAndUsage", "pricing:GetProducts"],
          "Resource": "*"
        }
      ]
@@ -99,15 +99,26 @@ To use Postgres, run `npm run db:schema:postgres`, set `COMMITCOST_DATABASE_URL`
 
    ```sh
    cp .env.example .env   # then fill in GITHUB_TOKEN, GITHUB_REPO and optionally COMMITCOST_TAG_KEY
-   npm run sync           # pulls 90 days of costs and merged PRs
+   npm run sync           # pulls 90 days of costs, usage by usage type, and merged PRs
    npm run analyze        # finds anomalies and ranks the PRs behind them
    ```
+
+`pricing:GetProducts` is only used with `COMMITCOST_PRICING=live` (current list prices from the AWS Price List API). Without it, the bundled price snapshot is used.
 
 `sync` is incremental: later runs only fetch days since the last sync (re-fetching the last 3, which AWS still revises). Cost Explorer charges $0.01 per request, so responses for settled date ranges are cached on disk in `.commitcost/cache/` and never re-requested; `sync` prints how many requests it made.
 
 ### Optional: LLM explanations
 
 The heuristic explanations work without any LLM. To have Claude rewrite the top suspect's explanation from the actual diff, set `COMMITCOST_LLM=anthropic` and `ANTHROPIC_API_KEY`. Only the suspect PR's diff (capped at 12k characters) and the cost numbers are sent. To add another provider, implement the `Explainer` interface in `engine/src/explain.ts`.
+
+### How costs are calculated
+
+CommitCost has two separate cost calculations, and the dashboard's **Cost model** page shows both:
+
+- **Measured** (overview, anomalies): read from the bill. An anomaly's size is observed daily cost minus its baseline, and its monthly impact is that daily change × 30. The anomaly page also shows which usage types moved (for example, m5.xlarge hours replaced by m5.2xlarge hours).
+- **Modeled** (PR check, suspects): `quantity × unit price × your effective rate`. Unit prices are real AWS list prices for the resource's region. Quantities come from the diff (instance counts, memory, capacity) or from your measured usage (instance hours, GB on each network path, Lambda GB-seconds, request units). The effective rate is what you pay per unit ÷ list price, so Savings Plans and RIs carry over. Every estimate lists its formula, each input with its source, and its assumptions.
+
+Details, and how to add GCP or Azure, are in [docs/COST_MODEL.md](docs/COST_MODEL.md). On the mock data, the model lands within 0.9x to 1.8x of every injected change, using only the usage from before each change merged.
 
 ### How attribution works
 
@@ -118,7 +129,7 @@ The heuristic explanations work without any LLM. To have Claude rewrite the top 
 
 ## Installing the GitHub Action
 
-The Action reviews each PR's diff with the same detectors the attribution engine uses and posts one comment listing likely cost increases: the file and line, why it costs money, a rough monthly impact with its assumptions, and a suggested fix. On later pushes it edits that comment instead of adding new ones, and it replaces it with an all-clear when the risky code is gone. Test, vendored and lock files are skipped, and only findings at or above `min-confidence` are reported, to keep false positives down. It needs no AWS access.
+The Action reviews each PR's diff with the same detectors the attribution engine uses and posts one comment listing likely cost increases: the file and line, why it costs money, an estimated monthly impact with its calculation (formula, inputs and their sources, assumptions), and a suggested fix. On later pushes it edits that comment instead of adding new ones, and it replaces it with an all-clear when the risky code is gone. Test, vendored and lock files are skipped, and only findings at or above `min-confidence` are reported, to keep false positives down. It needs no AWS access: it prices with the bundled AWS price snapshot, and you can give it your usage with a cost profile (below).
 
 Add `.github/workflows/commitcost.yml` to the repo you want checked:
 
@@ -139,15 +150,22 @@ jobs:
       - uses: John-Almos/CommitCost/action@main
         with:
           min-confidence: "0.6"
-          # Optional: current monthly spend per service, to bound estimates.
-          # service-spend: '{"EC2": 4200, "Lambda": 900}'
+          # Optional: your usage and effective rates, from `npm run profile`.
+          # cost-profile: .commitcost/cost-profile.json
+          # region: us-west-2
+          # assumptions: '{"cacheHitRate": 0.9, "requestsPerMonth": 30000000}'
 ```
+
+Without a profile, estimates use list prices with quantities from the diff, or a price per unit of traffic (for example, per million requests) when the diff doesn't give a volume. With one, they are calibrated with your bill: the instance count actually running under the resource's tag, your Lambda GB-seconds, GB on each network path, and your discount vs list. `npm run profile` writes the file from synced usage. It holds usage volumes and rates, no credentials, and needs a checkout step in the workflow so the Action can read it.
 
 | Input | Default | Meaning |
 | --- | --- | --- |
 | `github-token` | `${{ github.token }}` | Reads PR files and writes the comment |
 | `min-confidence` | `0.6` | Report findings at or above this confidence (0 to 1) |
-| `service-spend` | none | JSON of monthly spend per service, used to scale estimates |
+| `cost-profile` | none | Path to a cost profile from `npm run profile`, to calibrate estimates with your usage |
+| `region` | profile's main region, else `us-east-1` | Region for resources whose diff doesn't name one |
+| `assumptions` | none | JSON overriding the cost model's defaults (see the dashboard's Cost model page) |
+| `service-spend` | none | JSON of monthly spend per service, used as an upper bound when there's no profile |
 | `dry-run` | `false` | Write the review to the job summary only, never comment |
 
 The `warnings` output is the number of findings. PRs from forks get a read-only token, so on those the Action logs a warning and writes the job summary instead of commenting. Try it without installing anything on the dashboard's **PR check** page.
@@ -158,8 +176,8 @@ The `warnings` output is the number of findings. PRs from forks get a read-only 
 core/        Domain types, provider interfaces, date helpers
 db/          Prisma schema (SQLite locally, Postgres in production) and repository functions
 providers/   Data sources: mock/, aws/ (Cost Explorer), github/ (REST), llm/ (optional Claude explainer)
-cli/         demo, seed, sync and analyze commands
-engine/      Anomaly detection, diff detectors, attribution scoring (pure, no I/O)
+cli/         demo, seed, sync, analyze and profile commands
+engine/      Anomaly detection, diff detectors, attribution scoring, cost model (pure, no I/O)
 action/      GitHub Action for pre-merge cost warnings (bundled to action/dist/index.cjs)
 web/         Next.js dashboard
 ```

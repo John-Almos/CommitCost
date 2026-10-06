@@ -24,6 +24,10 @@ export interface CostEffect {
   rampDays: number;
   /** Whether the delta follows the service's weekday/weekend pattern. */
   followsTraffic: boolean;
+  /** Usage type the extra spend is billed under, as Cost Explorer reports it. */
+  usageType: string;
+  /** Once in force, the tag's existing spend on this usage type moves to `usageType` (an in-place resize). */
+  replacesUsageType?: string;
 }
 
 export interface InjectedChange {
@@ -66,6 +70,7 @@ export interface UnexplainedEvent {
   service: Service;
   tagValue: string;
   deltaUsd: number;
+  usageType: string;
   why: string;
 }
 
@@ -125,7 +130,7 @@ export const INJECTED_CHANGES: InjectedChange[] = [
        </tr>`,
       ),
     ],
-    effects: [{ service: "RDS", tagValue: "api", dailyDeltaUsd: 95, rampDays: 1, followsTraffic: false }],
+    effects: [{ service: "RDS", tagValue: "api", dailyDeltaUsd: 95, rampDays: 1, followsTraffic: false, usageType: "Multi-AZUsage:db.r6g.xl" }],
     why: "Adds a query per order inside a loop (N+1) on a hot endpoint, so RDS read IOPS and instance load jump once the web release picks it up.",
   },
   {
@@ -152,7 +157,7 @@ export const INJECTED_CHANGES: InjectedChange[] = [
            arn: !GetAtt ReportQueue.Arn`,
       ),
     ],
-    effects: [{ service: "Lambda", tagValue: "worker", dailyDeltaUsd: 115, rampDays: 0, followsTraffic: true }],
+    effects: [{ service: "Lambda", tagValue: "worker", dailyDeltaUsd: 115, rampDays: 0, followsTraffic: true, usageType: "Lambda-GB-Second" }],
     why: "Raises Lambda memory from 512 MB to 3008 MB (5.9x the GB-second price) and the timeout 10x on a function that runs on every queued report.",
   },
   {
@@ -200,8 +205,8 @@ export const INJECTED_CHANGES: InjectedChange[] = [
       ),
     ],
     effects: [
-      { service: "DataTransfer", tagValue: "", dailyDeltaUsd: 62, rampDays: 3, followsTraffic: true },
-      { service: "S3", tagValue: "", dailyDeltaUsd: 14, rampDays: 3, followsTraffic: false },
+      { service: "DataTransfer", tagValue: "", dailyDeltaUsd: 62, rampDays: 3, followsTraffic: true, usageType: "USE1-USW2-AWS-Out-Bytes" },
+      { service: "S3", tagValue: "", dailyDeltaUsd: 14, rampDays: 3, followsTraffic: false, usageType: "USW2-TimedStorage-ByteHrs" },
     ],
     why: "Turns on cross-region replication for every object in the uploads bucket, adding inter-region transfer charges plus a second copy of storage in STANDARD class.",
   },
@@ -229,7 +234,7 @@ export const INJECTED_CHANGES: InjectedChange[] = [
            arn: !GetAtt ReportQueue.Arn`,
       ),
     ],
-    effects: [{ service: "Lambda", tagValue: "worker", dailyDeltaUsd: -91, rampDays: 0, followsTraffic: true }],
+    effects: [{ service: "Lambda", tagValue: "worker", dailyDeltaUsd: -91, rampDays: 0, followsTraffic: true, usageType: "Lambda-GB-Second" }],
     why: "Lowers Lambda memory from 3008 MB to 1024 MB, removing most of the earlier increase.",
   },
   {
@@ -250,12 +255,12 @@ export const INJECTED_CHANGES: InjectedChange[] = [
    name             = "worker"
 -  instance_type    = "m5.xlarge"
 +  instance_type    = "m5.2xlarge"
-   min_size         = 3
-   max_size         = 6
-   desired_capacity = 3`,
+   min_size         = 24
+   max_size         = 48
+   desired_capacity = 32`,
       ),
     ],
-    effects: [{ service: "EC2", tagValue: "worker", dailyDeltaUsd: 150, rampDays: 0, followsTraffic: false }],
+    effects: [{ service: "EC2", tagValue: "worker", dailyDeltaUsd: 150, rampDays: 0, followsTraffic: false, usageType: "BoxUsage:m5.2xlarge", replacesUsageType: "BoxUsage:m5.xlarge" }],
     why: "Changes the worker Auto Scaling group from m5.xlarge to m5.2xlarge, doubling the hourly price of every worker instance around the clock for a job that runs once a night.",
   },
   {
@@ -287,7 +292,7 @@ export const INJECTED_CHANGES: InjectedChange[] = [
    }`,
       ),
     ],
-    effects: [{ service: "DynamoDB", tagValue: "api", dailyDeltaUsd: 55, rampDays: 0, followsTraffic: true }],
+    effects: [{ service: "DynamoDB", tagValue: "api", dailyDeltaUsd: 55, rampDays: 0, followsTraffic: true, usageType: "ReadRequestUnits" }],
     why: "Removes the Redis read-through cache in front of DynamoDB product lookups, so every page view becomes a DynamoDB read.",
   },
 ];
@@ -398,6 +403,7 @@ export const UNEXPLAINED_EVENTS: UnexplainedEvent[] = [
     service: "DataTransfer",
     tagValue: "web",
     deltaUsd: 85,
+    usageType: "DataTransfer-Out-Bytes",
     why: "A one-day crawler burst on the marketing site. No code change caused it.",
   },
 ];

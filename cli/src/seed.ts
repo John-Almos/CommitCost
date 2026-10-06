@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { clearMockData, saveCostRecords, saveDeploys, type PrismaClient } from "@commitcost/db";
+import { clearMockData, saveCostRecords, saveDeploys, saveUsageRecords, type PrismaClient } from "@commitcost/db";
 import { MockCostProvider, MockVcsProvider, generateMockDataset, type MockDataset, type MockOptions } from "@commitcost/providers";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
@@ -15,11 +15,14 @@ export const GROUND_TRUTH_PATH = resolve(repoRoot, ".commitcost/mock-ground-trut
 export async function seedMock(db: PrismaClient, options: MockOptions = {}): Promise<MockDataset> {
   const dataset = generateMockDataset(options);
   const range = { start: dataset.start, end: dataset.end };
-  const costs = await new MockCostProvider(dataset).getDailyCosts(range);
+  const costProvider = new MockCostProvider(dataset);
+  const costs = await costProvider.getDailyCosts(range);
+  const usage = await costProvider.getUsage(range);
   const deploys = await new MockVcsProvider(dataset).getDeploys(range);
 
   await clearMockData(db, dataset.repo);
   await saveCostRecords(db, costs);
+  await saveUsageRecords(db, usage);
   await saveDeploys(db, deploys);
 
   mkdirSync(dirname(GROUND_TRUTH_PATH), { recursive: true });

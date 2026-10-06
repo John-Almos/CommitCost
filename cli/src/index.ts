@@ -5,6 +5,7 @@ import { createClient } from "@commitcost/db";
 import { explainerFromEnv, runAnalysis } from "./analyzeCmd.js";
 import { loadDotEnv, readSyncConfig } from "./config.js";
 import { runDemo } from "./demo.js";
+import { exportProfile, localPriceBook, renderProfile } from "./profile.js";
 import { renderReports } from "./render.js";
 import { seedMock } from "./seed.js";
 import { sync } from "./sync.js";
@@ -17,10 +18,12 @@ Commands:
   demo      Seed mock data, run attribution, and check it against the injected spikes
   seed      Generate mock AWS costs and GitHub history and store them locally
   sync      Pull real AWS costs (Cost Explorer) and GitHub history into the database
-  analyze   Detect cost anomalies in stored data and rank the deploys that caused them`;
+  analyze   Detect cost anomalies in stored data and rank the deploys that caused them
+  profile   Write your measured usage and effective rates to a cost profile for the GitHub Action
+            (default .commitcost/cost-profile.json; pass a path to change it)`;
 
 async function main(command: string | undefined): Promise<void> {
-  if (!command || !["seed", "demo", "sync", "analyze"].includes(command)) {
+  if (!command || !["seed", "demo", "sync", "analyze", "profile"].includes(command)) {
     console.log(USAGE);
     process.exitCode = command ? 1 : 0;
     return;
@@ -40,6 +43,11 @@ async function main(command: string | undefined): Promise<void> {
       const config = readSyncConfig();
       await sync(db, config, resolve(repoRoot, ".commitcost/cache"));
       console.log("Done. Run `npm run analyze` next.");
+    } else if (command === "profile") {
+      const out = resolve(process.argv[3] ?? resolve(repoRoot, ".commitcost/cost-profile.json"));
+      const file = await exportProfile(db, out);
+      if (file.usage) console.log(renderProfile(file.usage, localPriceBook().name));
+      console.log(`\nWrote ${out}. Commit it (or upload it in CI) and pass it to the Action as \`cost-profile\`.`);
     } else {
       const reports = await runAnalysis(db, process.env.GITHUB_REPO || undefined, explainerFromEnv());
       console.log(renderReports(reports));

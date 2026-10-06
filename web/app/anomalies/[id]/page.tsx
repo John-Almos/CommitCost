@@ -1,9 +1,41 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ServiceChart } from "@/components/ServiceChart";
-import { DirectionBadge, Diff, Meter, ShaLink, WarningCard } from "@/components/ui";
+import { Calculation, DirectionBadge, Diff, Meter, ShaLink, WarningCard } from "@/components/ui";
 import { getAnomaly } from "@/lib/data";
+import { fmtRate } from "@commitcost/engine";
+import type { ModeledImpact } from "@/lib/data";
 import { SERVICE_NAMES, fmtDate, pct, usd, usdFull } from "@/lib/format";
+
+const qty = (n: number) => (n >= 1e6 ? `${(n / 1e6).toPrecision(3)}M` : n >= 100 ? Math.round(n).toLocaleString("en-US") : n.toPrecision(3));
+const rate = (n: number) => fmtRate(n);
+
+/** The cost model's estimate (from the diff and the usage before merge) next to what the bill then showed. */
+function ModeledVsMeasured({ modeled, measured, persistent }: { modeled: ModeledImpact; measured: number; persistent: boolean }) {
+  const bound = modeled.items.some((i) => i.estimate.range?.lowUsd === 0);
+  return (
+    <table style={{ marginTop: 4, fontSize: 13 }}>
+      <tbody>
+        <tr>
+          <td>Modeled from the diff</td>
+          <td className="num">{modeled.monthlyUsd !== undefined ? `${bound ? "up to " : ""}${usd(modeled.monthlyUsd, { sign: true })}/mo` : "per-unit only"}</td>
+        </tr>
+        <tr>
+          <td>Measured in the bill</td>
+          <td className="num">
+            {usd(measured, { sign: true })}
+            {persistent ? "/mo" : " one-off"}
+          </td>
+        </tr>
+        <tr>
+          <td colSpan={2} className="muted" style={{ fontSize: 12 }}>
+            The model prices the diff with list prices and the two weeks of usage before the merge. The bill measures what actually happened.
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  );
+}
 
 export const dynamic = "force-dynamic";
 
@@ -11,7 +43,7 @@ export default async function AnomalyPage({ params }: { params: Promise<{ id: st
   const { id } = await params;
   const data = await getAnomaly(id);
   if (!data) notFound();
-  const { anomaly: a, suspects, series, topWarnings } = data;
+  const { anomaly: a, suspects, series, topWarnings, billChanges, modeled } = data;
   const top = suspects[0];
   const confident = top && top.confidence >= 0.4;
   const name = SERVICE_NAMES[a.service] ?? a.service;
@@ -43,7 +75,7 @@ export default async function AnomalyPage({ params }: { params: Promise<{ id: st
             {usd(a.monthlyImpactUsd, { sign: true })}
             {a.persistent ? "/mo" : ""}
           </div>
-          <div className="tile-delta">{a.persistent ? "daily delta × 30" : `over ${a.durationDays} day${a.durationDays === 1 ? "" : "s"}`}</div>
+          <div className="tile-delta">{a.persistent ? "measured: daily change in the bill × 30" : `measured over ${a.durationDays} day${a.durationDays === 1 ? "" : "s"}`}</div>
         </div>
         <div className="card">
           <div className="tile-label">Most likely cause</div>
@@ -71,6 +103,46 @@ export default async function AnomalyPage({ params }: { params: Promise<{ id: st
         </div>
         <ServiceChart series={series} height={200} activeId={a.id} />
       </div>
+
+      {billChanges.length > 0 && (
+        <div className="card" style={{ marginBottom: 16 }}>
+          <h3 style={{ margin: "0 0 4px", fontSize: 15 }}>What changed in the bill</h3>
+          <p className="muted" style={{ margin: "0 0 8px", fontSize: 13 }}>
+            {name} usage by usage type{a.tagValue ? ` under app=${a.tagValue}` : ""}, daily average for the week before onset vs the week from onset.
+          </p>
+          <div className="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>Usage type</th>
+                  <th className="num">Before</th>
+                  <th className="num">After</th>
+                  <th className="num">Cost/day</th>
+                  <th className="num">Paid per unit</th>
+                </tr>
+              </thead>
+              <tbody>
+                {billChanges.slice(0, 6).map((c) => (
+                  <tr key={c.usageType}>
+                    <td>
+                      {c.description}
+                      <div className="muted mono calc-ref">{c.usageType}</div>
+                    </td>
+                    <td className="num">
+                      {qty(c.beforeQty)} {c.unit}
+                    </td>
+                    <td className="num">
+                      {qty(c.afterQty)} {c.unit}
+                    </td>
+                    <td className={`num ${c.afterUsd > c.beforeUsd ? "up-bad" : "down-good"}`}>{usdFull(c.afterUsd - c.beforeUsd, true)}</td>
+                    <td className="num mono">{rate(c.afterQty > 0 ? c.afterUsd / c.afterQty : c.beforeUsd / Math.max(c.beforeQty, 1e-9))}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       <div className="layout-main">
         <section className="stack">
@@ -133,12 +205,26 @@ export default async function AnomalyPage({ params }: { params: Promise<{ id: st
                 {topWarnings.map((w, i) => (
                   <WarningCard key={`${w.file}:${w.line}:${w.detector}`} w={w} n={i + 1} />
                 ))}
-                <p className="muted" style={{ margin: "10px 0 0", fontSize: 12 }}>
-                  The pre-merge estimate uses list prices and default assumptions because it can&apos;t see your bill. The observed impact was {usd(a.monthlyImpactUsd, { sign: true })}/mo.
-                </p>
               </>
             )}
           </div>
+          {confident && modeled && modeled.items.length > 0 && (
+            <div className="card">
+              <h3 style={{ margin: "0 0 4px", fontSize: 15 }}>Modeled vs measured</h3>
+              <ModeledVsMeasured modeled={modeled} measured={a.monthlyImpactUsd} persistent={a.persistent} />
+              {modeled.items.map((i) => (
+                <div key={i.title} style={{ marginTop: 10, fontSize: 13 }}>
+                  <strong>{i.title}</strong>: {i.estimate.summary}
+                  <Calculation e={i.estimate} />
+                </div>
+              ))}
+              <p style={{ margin: "10px 0 0" }}>
+                <Link href="/cost-model" style={{ fontSize: 13 }}>
+                  How costs are calculated →
+                </Link>
+              </p>
+            </div>
+          )}
           {confident && (
             <div className="card">
               <h3 style={{ margin: "0 0 8px", fontSize: 15 }}>Files in {top.deploy.prNumber ? `#${top.deploy.prNumber}` : "the change"}</h3>

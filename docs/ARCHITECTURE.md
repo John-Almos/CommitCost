@@ -8,8 +8,8 @@ npm workspaces, TypeScript run directly with `tsx` and `vitest`. Each package's 
 | --- | --- | --- |
 | `@commitcost/core` | none | Domain types (`CostRecord`, `Deploy`, `CostAnomaly`, `Attribution`), `CostProvider` / `VcsProvider` interfaces, date helpers |
 | `@commitcost/db` | core | Prisma schema and client, idempotent save/load functions |
-| `@commitcost/providers` | core, engine (types) | `mock/`, `aws/` (Cost Explorer with on-disk cache), `github/` (REST with pagination and rate-limit retries), `llm/` (Claude explainer) |
-| `@commitcost/engine` | core | Anomaly detection, diff detectors, candidate scoring, the `Explainer` interface. Pure functions, no I/O |
+| `@commitcost/providers` | core, engine (types) | `mock/`, `aws/` (Cost Explorer costs and usage with on-disk cache, Price List API), `github/` (REST with pagination and rate-limit retries), `llm/` (Claude explainer) |
+| `@commitcost/engine` | core | Anomaly detection, diff detectors, candidate scoring, the `Explainer` interface, and the cost model (`cost/`: price book, usage profile, estimators). Pure functions, no I/O |
 | `@commitcost/cli` | all | `demo`, `seed`, `sync`, `analyze` |
 | `@commitcost/action` | core, engine | PR review (`reviewFiles`), impact estimates, the consolidated comment, and the Action entry point |
 | `@commitcost/web` | core, db, engine, action | Next.js dashboard: overview, anomaly detail, changes, PR check |
@@ -30,6 +30,8 @@ See `db/prisma/schema.prisma` for the full definitions.
 
 **CostAnomaly**: the cost change being explained: service, the tag it's concentrated in, onset day, duration, baseline, observed, daily delta, direction, a robust deviation score, whether it persisted (step change or blip), and estimated monthly impact. Anomalies are derived data: each `analyze` run replaces them.
 
+**UsageRecord**: one day of usage for one usage type and tag value: quantity, unit and cost, from Cost Explorer grouped by `USAGE_TYPE` and tag. The cost model turns it into monthly volumes and the rate you actually pay. Each sync replaces the days it fetched.
+
 **Attribution**: links an anomaly to one suspect deploy, with rank (1 is most likely), confidence (0 to 1), a score breakdown (`timing`, `relevance`, `total`), the diff evidence (file, line, snippet), the explanation and its source (heuristic or LLM), and estimated monthly impact (daily delta × 30). An anomaly has one row per candidate, so "links a cost change to one or more deploys" is a ranked list.
 
 ## SQLite and Postgres
@@ -42,7 +44,7 @@ Prisma can't switch providers from an environment variable, so `db/prisma/schema
 
 ## Diff detectors
 
-`engine/src/diff/` parses unified-diff patches and runs detectors that each return findings with file, line, affected services, direction, confidence, why it costs money, a suggested fix and, where the diff states both values, a cost ratio. Attribution uses them to score relevance. The GitHub Action runs the same detectors on PR diffs and adds a rough monthly impact from `engine/src/impact.ts` (list prices plus stated assumptions), so a pattern that explains a past spike is also what gets flagged before merge.
+`engine/src/diff/` parses unified-diff patches and runs detectors that each return findings with file, line, affected services, direction, confidence, why it costs money, a suggested fix and, where the diff states both values, a cost ratio. Attribution uses them to score relevance. The GitHub Action runs the same detectors on PR diffs and prices each finding with the cost model in `engine/src/cost/` (see [COST_MODEL.md](COST_MODEL.md)), so a pattern that explains a past spike is also what gets flagged before merge.
 
 Detectors work line by line, using indentation for loop scope, so they handle JS/TS, Python, YAML, HCL and CDK without a parser per language. The trade-off is that a loop body which runs past the end of a diff hunk is cut at the hunk boundary.
 

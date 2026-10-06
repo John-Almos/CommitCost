@@ -175,6 +175,24 @@ button, .button { font: inherit; font-weight: 600; padding: 7px 14px; border-rad
 .empty { padding: 28px; text-align: center; color: var(--ink-2); }
 .callout { border: 1px solid var(--border); background: var(--surface-2); border-radius: 10px; padding: 12px 14px; }
 
+/* Cost model: how an estimate was calculated. */
+.calc { margin-top: 6px; }
+.calc-formula { background: var(--code-bg); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; font-size: 12.5px; overflow-wrap: anywhere; }
+.calc-note { font-size: 13px; margin: 8px 0 0; padding: 8px 10px; border-left: 3px solid var(--accent); background: var(--surface-2); border-radius: 4px; }
+.calc-inputs { margin-top: 6px; font-size: 12.5px; }
+.calc-inputs td, .calc-inputs th { padding: 5px 6px; }
+.calc-ref { font-size: 11px; overflow-wrap: anywhere; }
+.calc-assumptions { margin: 8px 0 0; padding-left: 18px; font-size: 12.5px; color: var(--ink-2); }
+.src { font-size: 11px; font-weight: 600; padding: 0 6px; border-radius: 999px; border: 1px solid var(--border); white-space: nowrap; }
+.src-diff { color: var(--accent); }
+.src-usage { color: var(--good-text); }
+.src-price-list { color: var(--ink); }
+.src-config { color: var(--ink); }
+.src-default { color: var(--ink-2); border-style: dashed; }
+.badge.basis-usage-calibrated { color: var(--good-text); }
+.badge.basis-list-price, .badge.basis-per-unit, .badge.basis-qualitative { color: var(--ink-2); font-weight: 500; }
+.table-scroll { overflow-x: auto; }
+
 /* Narrow side panels stack the label above the value. */
 aside .kv { grid-template-columns: 1fr; gap: 0; }
 aside .kv dt { margin-top: 8px; font-size: 12px; }

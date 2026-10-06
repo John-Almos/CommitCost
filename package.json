@@ -31,7 +31,9 @@
     "analyze": "node scripts/preflight.mjs && npm run db:push && tsx cli/src/index.ts analyze",
     "dashboard": "node scripts/preflight.mjs && npm run dev -w @commitcost/web",
     "build:web": "npm run build -w @commitcost/web",
-    "build:action": "npm run build -w @commitcost/action"
+    "build:action": "npm run build -w @commitcost/action",
+    "profile": "node scripts/preflight.mjs && npm run db:push && tsx cli/src/index.ts profile",
+    "prices:snapshot": "tsx scripts/build-price-snapshot.ts"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

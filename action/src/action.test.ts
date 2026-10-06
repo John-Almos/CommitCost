@@ -7,6 +7,8 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { SAMPLE_PRS } from "./fixtures.js";
 import { GitHub, type Fetch } from "./github.js";
+import { SnapshotPriceBook, buildUsageProfile } from "@commitcost/engine";
+import { readCostProfileFile } from "./costProfile.js";
 import { COMMENT_MARKER, renderComment, reviewFiles } from "./review.js";
 import { run } from "./run.js";
 
@@ -40,6 +42,35 @@ describe("reviewFiles", () => {
   });
 });
 
+describe("cost profile", () => {
+  it("calibrates estimates with an exported usage profile and shows the working", () => {
+    const usage = Array.from({ length: 14 }, (_, i) => ({
+      date: `2026-09-${String(i + 1).padStart(2, "0")}`,
+      provider: "aws" as const,
+      accountId: "1",
+      service: "EC2" as const,
+      usageType: "BoxUsage:m5.xlarge",
+      tagKey: "app",
+      tagValue: "worker",
+      unit: "Hrs",
+      quantity: 30 * 24,
+      costUsd: 30 * 24 * 0.192,
+      source: "aws-cost-explorer" as const,
+    }));
+    const dir = mkdtempSync(join(tmpdir(), "cc-profile-"));
+    const path = join(dir, "profile.json");
+    writeFileSync(path, JSON.stringify({ version: 1, generatedAt: "2026-09-15", region: "us-east-1", usage: buildUsageProfile(usage, new SnapshotPriceBook()) }));
+    const warnings = reviewFiles(toDiffs(SAMPLE_PRS.infra.files), { cost: readCostProfileFile(path, { assumptions: '{"cacheHitRate":0.9}' }) });
+    expect(warnings[0]!.impact.estimate.basis).toBe("usage-calibrated");
+    expect(warnings[0]!.impact.monthlyUsd).toBeCloseTo(30 * 0.192 * 730, 1);
+    const body = renderComment(warnings, ctx);
+    expect(body).toContain("How this was calculated");
+    expect(body).toContain("30 instances (from your bill) × ($0.384 − $0.192)/h × 730 h");
+    expect(body).toContain("Volumes calibrated with your bill.");
+    expect(() => readCostProfileFile(undefined, { assumptions: "{nope" })).toThrow(/assumptions must be a JSON object/);
+  });
+});
+
 describe("renderComment", () => {
   it("writes one sensible comment for a query in a loop", () => {
     const body = renderComment(reviewFiles(toDiffs(SAMPLE_PRS.nPlusOne.files)), ctx);
@@ -48,7 +79,8 @@ describe("renderComment", () => {
     expect(body).toContain("Database query inside a loop (N+1)");
     expect(body).toContain("https://github.com/acme/app/blob/abcdef1234567890/services/api/src/routes/orders.ts#L44");
     expect(body).toMatch(/\*\*Why it costs money:\*\* Each iteration makes its own database query/);
-    expect(body).toMatch(/\*\*Rough impact:\*\* ~50x more queries per request on this path\. _Assumes: A loop over 50 items/);
+    expect(body).toContain("**Estimated impact:** ~50x more queries per request on this path");
+    expect(body).toContain("| items per request (the outer query's LIMIT) | 50 items | this change |");
     expect(body).toContain("**Suggested fix:** Fetch the related rows in one query");
     expect(body).toContain("+  for (const order of orders.rows) {");
   });

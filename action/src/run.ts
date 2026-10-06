@@ -1,4 +1,5 @@
 import type { Service } from "@commitcost/core";
+import type { CostContextInput } from "@commitcost/engine";
 import type { GitHub } from "./github.js";
 import { COMMENT_MARKER, renderComment, reviewFiles, type Warning } from "./review.js";
 
@@ -8,6 +9,7 @@ export interface RunInput {
   headSha: string;
   minConfidence: number;
   serviceSpend?: Partial<Record<Service, number>>;
+  cost?: CostContextInput;
   dryRun: boolean;
 }
 
@@ -28,7 +30,7 @@ export async function run(gh: GitHub, input: RunInput): Promise<RunResult> {
   const files = await gh.listPrFiles(input.repo, input.prNumber);
   const warnings = reviewFiles(
     files.filter((f) => f.status !== "removed").map((f) => ({ path: f.filename, patch: f.patch })),
-    { minConfidence: input.minConfidence, serviceSpend: input.serviceSpend },
+    { minConfidence: input.minConfidence, serviceSpend: input.serviceSpend, cost: input.cost },
   );
   const body = renderComment(warnings, { repo: input.repo, headSha: input.headSha });
   if (input.dryRun) return { warnings, body, action: "dry-run" };
