@@ -21,16 +21,19 @@ datasource db {
 // ---------------------------------------------------------------------------
 
 model Organization {
-  id            String   @id @default(cuid())
-  slug          String   @unique
-  name          String
+  id             String   @id @default(cuid())
+  slug           String   @unique
+  name           String
   /// The seeded mock-data workspace. Readable by every signed-in user.
-  isDemo        Boolean  @default(false)
+  isDemo         Boolean  @default(false)
   /// Random per-organization value the customer's IAM role requires in
   /// sts:AssumeRole. Prevents another CommitCost customer from pointing their
   /// workspace at this customer's role (the "confused deputy" problem).
-  awsExternalId String   @unique
-  createdAt     DateTime @default(now())
+  awsExternalId  String   @unique
+  /// Reserved for the cost-estimation module: the workspace's cloud, regions,
+  /// usage and network profile used to price changes. Not read yet.
+  pricingProfile Json?
+  createdAt      DateTime @default(now())
 
   memberships   Membership[]
   invites       Invite[]

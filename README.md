@@ -73,7 +73,20 @@ Copy `.env.example` to `.env` if you need to override anything. With no `DATABAS
 
 To use Postgres, run `npm run db:schema:postgres`, set `DATABASE_URL` to your Postgres URL, and point Prisma at `db/prisma/postgres/schema.prisma`.
 
-## Connecting real AWS and GitHub
+## Hosted mode: companies connect their own AWS and GitHub
+
+CommitCost can run as a multi-company service. People sign in with GitHub, create a workspace for their company, and connect:
+
+- **AWS** by deploying a CloudFormation stack that creates a read-only IAM role (`ce:GetCostAndUsage` and `ce:GetTags` only). Only CommitCost's AWS principal can assume it, and only with the workspace's external ID. No AWS keys are created or stored.
+- **GitHub** by installing the CommitCost GitHub App on the repos they choose (read-only contents, pull requests and metadata).
+
+A worker (`npm run worker`) then syncs each workspace every 6 hours and re-runs attribution. Every row of cost, change and analysis data belongs to one workspace. Setting up the GitHub App, the AWS principal and hosting is covered in [docs/ONBOARDING.md](docs/ONBOARDING.md).
+
+Without a GitHub App configured, the dashboard runs in **local mode**: no sign-in, one local user, and the Demo workspace, so `npm run demo` works exactly as before. If you have a database from an earlier version, delete `.commitcost/commitcost.db` first; workspaces changed the schema.
+
+## Self-hosted: one workspace with your own credentials
+
+The CLI can also sync a single workspace using credentials on your machine. Data goes into the `local` workspace (`--org <slug>` or `COMMITCOST_ORG` to change it).
 
 1. **AWS.** CommitCost only needs read-only Cost Explorer access. Attach this policy to the user or role whose credentials you use:
 
@@ -100,7 +113,7 @@ To use Postgres, run `npm run db:schema:postgres`, set `DATABASE_URL` to your Po
    ```sh
    cp .env.example .env   # then fill in GITHUB_TOKEN, GITHUB_REPO and optionally COMMITCOST_TAG_KEY
    npm run sync           # pulls 90 days of costs and merged PRs
-   npm run analyze        # finds anomalies and ranks the PRs behind them
+   npm run analyze        # finds anomalies and ranks the PRs behind them (in the local workspace)
    ```
 
 `sync` is incremental: later runs only fetch days since the last sync (re-fetching the last 3, which AWS still revises). Cost Explorer charges $0.01 per request, so responses for settled date ranges are cached on disk in `.commitcost/cache/` and never re-requested; `sync` prints how many requests it made.
@@ -158,7 +171,8 @@ The `warnings` output is the number of findings. PRs from forks get a read-only 
 core/        Domain types, provider interfaces, date helpers
 db/          Prisma schema (SQLite locally, Postgres in production) and repository functions
 providers/   Data sources: mock/, aws/ (Cost Explorer), github/ (REST), llm/ (optional Claude explainer)
-cli/         demo, seed, sync and analyze commands
+platform/    Hosted mode: AWS role assumption, GitHub App auth, per-workspace sync and the worker
+cli/         demo, seed, sync, analyze, sync-org and cfn-template commands
 engine/      Anomaly detection, diff detectors, attribution scoring (pure, no I/O)
 action/      GitHub Action for pre-merge cost warnings (bundled to action/dist/index.cjs)
 web/         Next.js dashboard

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { ShaLink } from "@/components/ui";
+import { requireWorkspace } from "@/lib/auth";
 import { listChanges } from "@/lib/data";
 import { SERVICE_NAMES, fmtDate, usd } from "@/lib/format";
 
@@ -7,7 +8,8 @@ export const dynamic = "force-dynamic";
 
 export default async function ChangesPage({ searchParams }: { searchParams: Promise<{ filter?: string }> }) {
   const { filter } = await searchParams;
-  const all = await listChanges();
+  const { org } = await requireWorkspace();
+  const all = await listChanges(org.id);
   const changes = filter === "cost" ? all.filter((c) => c.attributed.length > 0 || c.warnings > 0) : all;
   const flagged = all.filter((c) => c.attributed.length > 0 || c.warnings > 0).length;
 

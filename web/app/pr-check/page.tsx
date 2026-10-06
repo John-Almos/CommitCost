@@ -1,5 +1,6 @@
 import { SAMPLE_PRS } from "@commitcost/action";
 import { PrCheck, type Example } from "@/components/PrCheck";
+import { requireWorkspace } from "@/lib/auth";
 import { listChanges } from "@/lib/data";
 import { toGitDiff } from "@/lib/diffText";
 
@@ -13,7 +14,8 @@ export default async function PrCheckPage({ searchParams }: { searchParams: Prom
     diff: toGitDiff(pr.files.map((f) => ({ path: f.filename, patch: f.patch }))),
   }));
   // Past PRs that caused cost changes make good examples too.
-  const past = (await listChanges())
+  const { org } = await requireWorkspace();
+  const past = (await listChanges(org.id))
     .filter((c) => c.warnings > 0)
     .slice(0, 4)
     .map((c) => ({ id: c.sha.slice(0, 12), label: `#${c.prNumber ?? c.sha.slice(0, 7)} ${c.title}`, diff: toGitDiff(c.files) }));

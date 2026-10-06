@@ -13,8 +13,8 @@ if (!process.env.DATABASE_URL) {
 
 const config: NextConfig = {
   // Workspace packages ship TypeScript source.
-  transpilePackages: ["@commitcost/core", "@commitcost/db", "@commitcost/engine", "@commitcost/action"],
-  serverExternalPackages: ["@prisma/client", ".prisma/client"],
+  transpilePackages: ["@commitcost/core", "@commitcost/db", "@commitcost/engine", "@commitcost/action", "@commitcost/platform", "@commitcost/providers"],
+  serverExternalPackages: ["@prisma/client", ".prisma/client", "@aws-sdk/client-cost-explorer", "@aws-sdk/client-sts", "@anthropic-ai/sdk"],
   outputFileTracingRoot: repoRoot,
   // Workspace sources use NodeNext-style "./x.js" imports of .ts files.
   // Webpack maps those via extensionAlias; Turbopack can't yet, so the
@@ -24,6 +24,8 @@ const config: NextConfig = {
     return cfg;
   },
   env: { DATABASE_URL: process.env.DATABASE_URL },
+  // Don't write web/AGENTS.md on every dev start.
+  agentRules: false,
 };
 
 export default config;

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { renderComment } from "@commitcost/action";
 import { DirectionBadge, Diff, Meter, WarningCard } from "@/components/ui";
+import { requireWorkspace } from "@/lib/auth";
 import { getChange } from "@/lib/data";
 import { SERVICE_NAMES, fmtDate, usd } from "@/lib/format";
 
@@ -9,7 +10,8 @@ export const dynamic = "force-dynamic";
 
 export default async function ChangePage({ params }: { params: Promise<{ sha: string }> }) {
   const { sha } = await params;
-  const data = await getChange(sha);
+  const { org } = await requireWorkspace();
+  const data = await getChange(org.id, sha);
   if (!data) notFound();
   const { deploy: d, warnings, attributions } = data;
   const caused = attributions.filter((a) => a.rank === 1 && a.confidence >= 0.4);

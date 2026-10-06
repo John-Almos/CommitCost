@@ -10,9 +10,10 @@ npm workspaces, TypeScript run directly with `tsx` and `vitest`. Each package's 
 | `@commitcost/db` | core | Prisma schema and client, idempotent save/load functions |
 | `@commitcost/providers` | core, engine (types) | `mock/`, `aws/` (Cost Explorer with on-disk cache), `github/` (REST with pagination and rate-limit retries), `llm/` (Claude explainer) |
 | `@commitcost/engine` | core | Anomaly detection, diff detectors, candidate scoring, the `Explainer` interface. Pure functions, no I/O |
+| `@commitcost/platform` | core, db, providers, engine | Hosted mode: platform config, the customer IAM role template and `sts:AssumeRole` checks, GitHub App auth (JWT, installation tokens, OAuth), per-workspace sync, and the queue worker |
 | `@commitcost/cli` | all | `demo`, `seed`, `sync`, `analyze` |
 | `@commitcost/action` | core, engine | PR review (`reviewFiles`), impact estimates, the consolidated comment, and the Action entry point |
-| `@commitcost/web` | core, db, engine, action | Next.js dashboard: overview, anomaly detail, changes, PR check |
+| `@commitcost/web` | core, db, engine, action, platform | Next.js dashboard: overview, anomaly detail, changes, PR check |
 
 Data flows one way: providers produce domain objects, db stores them, the engine reads domain objects and returns anomalies and attributions, and db stores those for the dashboard.
 
@@ -21,6 +22,8 @@ Adding GCP or Azure means a new `CostProvider` and mapping its service names ont
 ## Data model
 
 See `db/prisma/schema.prisma` for the full definitions.
+
+**Organization** (a workspace) owns everything below. `CostRecord`, `Deploy` and `CostAnomaly` carry `orgId` and their unique keys start with it; every repository function takes an `orgId`, and the web app takes it from the signed-in user's current workspace, never from the request. `User`, `Membership` (owner or member), `Invite` and `Session` (hashed tokens) cover sign-in. `AwsConnection` stores a role ARN per account, `GitHubInstallation` and `TrackedRepo` store which repos to read; none of them hold a secret. `SyncRun` is both the sync history and the job queue.
 
 **CostRecord**: one day of spend for one service and one cost-allocation tag value. This mirrors a Cost Explorer `GetCostAndUsage` call grouped by `SERVICE` and `TAG`. Unique on `(date, provider, accountId, service, tagKey, tagValue)` so re-syncs overwrite rather than duplicate. Tag fields use `""` rather than NULL so the unique key behaves the same on SQLite and Postgres.
 
