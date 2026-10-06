@@ -6,7 +6,7 @@ It has three parts that share one engine: a sync that pulls AWS Cost Explorer da
 
 ## Quickstart (mock mode, no credentials)
 
-Requires Node 20 or newer.
+Requires Node 20.9 or newer (Node 22 recommended; `.nvmrc` pins it, so `nvm install && nvm use` picks the right version). Check with `node -v`. On an older Node, `npm install` stops with an "Unsupported engine" error naming the required version.
 
 ```sh
 npm install
