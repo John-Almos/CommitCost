@@ -1,6 +1,6 @@
 /** Minimal GitHub REST client: auth, pagination, and rate-limit handling. */
 
-export type FetchLike = (url: string, init?: { headers?: Record<string, string> }) => Promise<{
+export type FetchLike = (url: string, init?: { method?: string; headers?: Record<string, string>; body?: string }) => Promise<{
   ok: boolean;
   status: number;
   headers: { get(name: string): string | null };
@@ -58,6 +58,11 @@ export class GitHubClient {
     return (await this.request<T>(this.url(path))).body;
   }
 
+  /** POST a JSON body (used for minting GitHub App installation tokens). */
+  async post<T>(path: string, body: unknown = {}): Promise<T> {
+    return (await this.request<T>(this.url(path), { method: "POST", body: JSON.stringify(body) })).body;
+  }
+
   /**
    * Iterates pages via the Link header. Return false from `onPage` to stop
    * early (e.g. once results are older than the range being synced).
@@ -75,10 +80,12 @@ export class GitHubClient {
     return path.startsWith("http") ? path : `${this.baseUrl}${path}`;
   }
 
-  private async request<T>(url: string): Promise<{ body: T; next: string | null }> {
+  private async request<T>(url: string, init: { method?: string; body?: string } = {}): Promise<{ body: T; next: string | null }> {
     for (let attempt = 0; ; attempt++) {
       this.requestCount++;
-      const res = await this.fetchImpl(url, { headers: this.headers() });
+      const headers = this.headers();
+      if (init.body !== undefined) headers["Content-Type"] = "application/json";
+      const res = await this.fetchImpl(url, { ...init, headers });
       if (res.ok) {
         return { body: (await res.json()) as T, next: parseNextLink(res.headers.get("link")) };
       }

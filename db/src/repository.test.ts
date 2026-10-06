@@ -7,21 +7,24 @@ import { generateMockDataset } from "@commitcost/providers";
 import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { analyze } from "@commitcost/engine";
-import { clearMockData, latestCostDate, latestDeployDate, loadCostRecords, loadDailyServiceTotals, loadDeploys, saveAnalysis, saveCostRecords, saveDeploys } from "./repository.js";
+import { ensureDemoOrg, createOrganization } from "./orgs.js";
+import { clearOrgData, latestCostDate, latestDeployDate, loadCostRecords, loadDailyServiceTotals, loadDeploys, saveAnalysis, saveCostRecords, saveDeploys } from "./repository.js";
 
 const dbDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const tmp = mkdtempSync(join(tmpdir(), "commitcost-db-"));
 const url = `file:${join(tmp, "test.db")}`;
 const data = generateMockDataset({ endDate: "2026-10-05" });
 let db: PrismaClient;
+let orgId: string;
 
-beforeAll(() => {
+beforeAll(async () => {
   execFileSync("npx", ["prisma", "db", "push", "--skip-generate", "--schema", "prisma/schema.prisma"], {
     cwd: dbDir,
     env: { ...process.env, DATABASE_URL: url },
     stdio: "pipe",
   });
   db = new PrismaClient({ datasources: { db: { url } } });
+  orgId = (await ensureDemoOrg(db)).id;
 }, 60_000);
 
 afterAll(async () => {
@@ -31,15 +34,15 @@ afterAll(async () => {
 
 describe("repository", () => {
   it("round-trips mock costs and deploys", async () => {
-    await saveCostRecords(db, data.costs);
-    await saveDeploys(db, data.deploys);
+    await saveCostRecords(db, orgId, data.costs);
+    await saveDeploys(db, orgId, data.deploys);
 
     expect(await db.costRecord.count()).toBe(data.costs.length);
     expect(await db.deploy.count()).toBe(data.deploys.length);
 
     const spike = data.spikes[0]!;
     const stored = await db.deploy.findUnique({
-      where: { repo_commitSha: { repo: data.repo, commitSha: spike.commitSha } },
+      where: { orgId_repo_commitSha: { orgId, repo: data.repo, commitSha: spike.commitSha } },
       include: { files: true },
     });
     expect(stored?.title).toBe(spike.title);
@@ -47,7 +50,7 @@ describe("repository", () => {
   }, 60_000);
 
   it("sums tag rows into daily service totals", async () => {
-    const totals = await loadDailyServiceTotals(db);
+    const totals = await loadDailyServiceTotals(db, orgId);
     expect(totals).toHaveLength(90 * 6);
     const expected = data.costs
       .filter((r) => r.date === "2026-09-01" && r.service === "EC2")
@@ -57,8 +60,8 @@ describe("repository", () => {
   });
 
   it("is idempotent on re-save", async () => {
-    await saveCostRecords(db, data.costs.slice(0, 50));
-    await saveDeploys(db, data.deploys.slice(0, 5));
+    await saveCostRecords(db, orgId, data.costs.slice(0, 50));
+    await saveDeploys(db, orgId, data.deploys.slice(0, 5));
     expect(await db.costRecord.count()).toBe(data.costs.length);
     expect(await db.deploy.count()).toBe(data.deploys.length);
     const files = await db.deployFile.count();
@@ -66,25 +69,42 @@ describe("repository", () => {
   }, 60_000);
 
   it("loads stored data back as domain objects", async () => {
-    expect(await loadCostRecords(db)).toHaveLength(data.costs.length);
-    const deploys = await loadDeploys(db, data.repo);
+    expect(await loadCostRecords(db, orgId)).toHaveLength(data.costs.length);
+    const deploys = await loadDeploys(db, orgId, data.repo);
     expect(deploys.find((d) => d.commitSha === data.spikes[0]!.commitSha)).toEqual(data.deploys.find((d) => d.commitSha === data.spikes[0]!.commitSha));
-    expect(await latestCostDate(db, "mock")).toBe(data.end);
-    expect(await latestDeployDate(db, data.repo)).toBe(data.deploys.at(-1)!.mergedAt.slice(0, 10));
+    expect(await latestCostDate(db, orgId, "mock")).toBe(data.end);
+    expect(await latestDeployDate(db, orgId, data.repo)).toBe(data.deploys.at(-1)!.mergedAt.slice(0, 10));
   });
 
   it("saves analysis results and replaces them on re-run", async () => {
-    const reports = await analyze(await loadCostRecords(db), await loadDeploys(db, data.repo));
-    await saveAnalysis(db, reports, data.repo);
-    await saveAnalysis(db, reports, data.repo);
+    const reports = await analyze(await loadCostRecords(db, orgId), await loadDeploys(db, orgId, data.repo));
+    await saveAnalysis(db, orgId, reports);
+    await saveAnalysis(db, orgId, reports);
     expect(await db.costAnomaly.count()).toBe(reports.length);
     const top = await db.attribution.findFirst({ where: { rank: 1, anomaly: { service: "RDS" } }, include: { deploy: true } });
     expect(top?.deploy.commitSha).toBe(data.spikes[0]!.commitSha);
     expect(top?.evidence).toEqual(reports.find((r) => r.anomaly.service === "RDS")!.suspects[0]!.evidence);
   }, 60_000);
 
-  it("clears mock data", async () => {
-    await clearMockData(db, data.repo);
+  it("keeps workspaces isolated", async () => {
+    const user = await db.user.create({ data: { githubId: 99, login: "other" } });
+    const other = await createOrganization(db, "Other Co", user.id);
+    // Same rows in a second workspace don't collide with or overwrite the first.
+    await saveCostRecords(db, other.id, data.costs.slice(0, 10));
+    await saveDeploys(db, other.id, data.deploys.slice(0, 2));
+    expect(await loadCostRecords(db, other.id)).toHaveLength(10);
+    expect(await loadDeploys(db, other.id)).toHaveLength(2);
+    expect(await loadCostRecords(db, orgId)).toHaveLength(data.costs.length);
+    // Re-running analysis in one workspace leaves the other's results alone.
+    await saveAnalysis(db, other.id, []);
+    expect(await db.costAnomaly.count({ where: { orgId } })).toBeGreaterThan(0);
+    await clearOrgData(db, other.id);
+    expect(await db.costRecord.count({ where: { orgId: other.id } })).toBe(0);
+    expect(await db.costRecord.count({ where: { orgId } })).toBe(data.costs.length);
+  }, 60_000);
+
+  it("clears a workspace's data", async () => {
+    await clearOrgData(db, orgId);
     expect(await db.costRecord.count()).toBe(0);
     expect(await db.deploy.count()).toBe(0);
     expect(await db.deployFile.count()).toBe(0);

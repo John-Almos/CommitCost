@@ -14,29 +14,189 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// ---------------------------------------------------------------------------
+// Tenancy: every company is an Organization ("workspace"). All cost, deploy and
+// analysis rows belong to exactly one organization and are always queried
+// with its id.
+// ---------------------------------------------------------------------------
+
+model Organization {
+  id            String   @id @default(cuid())
+  slug          String   @unique
+  name          String
+  /// The seeded mock-data workspace. Readable by every signed-in user.
+  isDemo        Boolean  @default(false)
+  /// Random per-organization value the customer's IAM role requires in
+  /// sts:AssumeRole. Prevents another CommitCost customer from pointing their
+  /// workspace at this customer's role (the "confused deputy" problem).
+  awsExternalId String   @unique
+  createdAt     DateTime @default(now())
+
+  memberships   Membership[]
+  invites       Invite[]
+  awsAccounts   AwsConnection[]
+  installations GitHubInstallation[]
+  repos         TrackedRepo[]
+  syncRuns      SyncRun[]
+  costRecords   CostRecord[]
+  deploys       Deploy[]
+  anomalies     CostAnomaly[]
+}
+
+/// A person, identified by their GitHub account.
+model User {
+  id        String   @id @default(cuid())
+  githubId  Int      @unique
+  login     String
+  name      String?
+  avatarUrl String?
+  createdAt DateTime @default(now())
+
+  memberships Membership[]
+  sessions    Session[]
+}
+
+model Membership {
+  id        String       @id @default(cuid())
+  userId    String
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  orgId     String
+  org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  role      String // "owner" | "member"
+  createdAt DateTime     @default(now())
+
+  @@unique([userId, orgId])
+  @@index([orgId])
+}
+
+/// A pending invitation, claimed when that GitHub user next signs in.
+model Invite {
+  id          String       @id @default(cuid())
+  orgId       String
+  org         Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  githubLogin String // lowercased
+  role        String       @default("member")
+  invitedBy   String // user id
+  createdAt   DateTime     @default(now())
+
+  @@unique([orgId, githubLogin])
+  @@index([githubLogin])
+}
+
+/// Browser session. Only a SHA-256 of the cookie value is stored.
+model Session {
+  id        String   @id @default(cuid())
+  tokenHash String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+/// A customer AWS account connected through a read-only IAM role that
+/// CommitCost assumes with the organization's external ID. No AWS keys are
+/// stored anywhere.
+model AwsConnection {
+  id         String       @id @default(cuid())
+  orgId      String
+  org        Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  accountId  String // 12 digits, parsed from the role ARN
+  roleArn    String
+  /// Cost-allocation tag to group by, e.g. "app". Empty = service only.
+  tagKey     String       @default("")
+  costMetric String       @default("UnblendedCost")
+  status     String       @default("active") // "active" | "error"
+  lastError  String?
+  verifiedAt DateTime?
+  createdAt  DateTime     @default(now())
+
+  @@unique([orgId, accountId])
+}
+
+/// A GitHub App installation on a customer's GitHub account or org. Access
+/// tokens are minted per sync from the App's private key and never stored.
+model GitHubInstallation {
+  id             String       @id @default(cuid())
+  orgId          String
+  org            Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  installationId Int          @unique
+  accountLogin   String
+  accountType    String // "User" | "Organization"
+  suspended      Boolean      @default(false)
+  createdAt      DateTime     @default(now())
+
+  repos TrackedRepo[]
+}
+
+/// A repository whose merged changes are synced and attributed.
+model TrackedRepo {
+  id             String             @id @default(cuid())
+  orgId          String
+  org            Organization       @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  installationId String
+  installation   GitHubInstallation @relation(fields: [installationId], references: [id], onDelete: Cascade)
+  githubRepoId   Int
+  fullName       String // "owner/name"
+  defaultBranch  String
+  createdAt      DateTime           @default(now())
+
+  @@unique([orgId, fullName])
+  @@index([installationId])
+}
+
+/// One sync + analysis pass for an organization. Doubles as the job queue:
+/// the worker claims "queued" rows, so no separate queue service is needed.
+model SyncRun {
+  id         String       @id @default(cuid())
+  orgId      String
+  org        Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  trigger    String // "schedule" | "manual" | "connect"
+  status     String       @default("queued") // "queued" | "running" | "succeeded" | "failed"
+  queuedAt   DateTime     @default(now())
+  startedAt  DateTime?
+  finishedAt DateTime?
+  /// Human-readable progress lines, newline separated.
+  log        String       @default("")
+  error      String?
+  workerId   String?
+
+  @@index([status, queuedAt])
+  @@index([orgId, queuedAt])
+}
+
+// ---------------------------------------------------------------------------
+// Cost and change data, scoped by organization.
+// ---------------------------------------------------------------------------
+
 /// One day of spend for one service and one cost-allocation tag value.
 /// Empty strings (not NULL) mean "not grouped by tag" / "untagged" so the
 /// unique key works the same way on SQLite and Postgres.
 model CostRecord {
-  id        String   @id @default(cuid())
+  id        String       @id @default(cuid())
+  orgId     String
+  org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
   date      DateTime // midnight UTC of the billing day
-  provider  String   // "aws"
+  provider  String // "aws"
   accountId String
-  service   String   // normalized: EC2, RDS, Lambda, S3, DynamoDB, DataTransfer
-  tagKey    String   @default("")
-  tagValue  String   @default("")
+  service   String // normalized: EC2, RDS, Lambda, S3, DynamoDB, DataTransfer
+  tagKey    String       @default("")
+  tagValue  String       @default("")
   amountUsd Float
-  source    String   // "mock" | "aws-cost-explorer"
-  fetchedAt DateTime @default(now())
+  source    String // "mock" | "aws-cost-explorer"
+  fetchedAt DateTime     @default(now())
 
-  @@unique([date, provider, accountId, service, tagKey, tagValue])
-  @@index([service, date])
+  @@unique([orgId, date, provider, accountId, service, tagKey, tagValue])
+  @@index([orgId, service, date])
 }
 
 /// A change that reached the default branch (merged PR or direct push).
 model Deploy {
   id        String       @id @default(cuid())
-  repo      String       // "owner/name"
+  orgId     String
+  org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  repo      String // "owner/name"
   commitSha String
   prNumber  Int?
   mergedAt  DateTime
@@ -48,8 +208,8 @@ model Deploy {
 
   attributions Attribution[]
 
-  @@unique([repo, commitSha])
-  @@index([mergedAt])
+  @@unique([orgId, repo, commitSha])
+  @@index([orgId, mergedAt])
 }
 
 model DeployFile {
@@ -67,25 +227,27 @@ model DeployFile {
 /// A significant deviation in a service's daily cost from its baseline.
 /// This is the "cost change" that attributions point at.
 model CostAnomaly {
-  id                        String   @id @default(cuid())
+  id                        String       @id @default(cuid())
+  orgId                     String
+  org                       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
   provider                  String
   service                   String
-  tagValue                  String   @default("") // app tag the change is concentrated in, if any
+  tagValue                  String       @default("") // app tag the change is concentrated in, if any
   onsetDate                 DateTime
   durationDays              Int
   baselineUsd               Float
   observedUsd               Float
-  deltaUsd                  Float    // per day, observed - baseline
-  direction                 String   // "increase" | "decrease"
-  score                     Float    // robust deviation score
-  persistent                Boolean  // step change (true) or blip (false)
+  deltaUsd                  Float // per day, observed - baseline
+  direction                 String // "increase" | "decrease"
+  score                     Float // robust deviation score
+  persistent                Boolean // step change (true) or blip (false)
   estimatedMonthlyImpactUsd Float
-  detectedAt                DateTime @default(now())
+  detectedAt                DateTime     @default(now())
 
   attributions Attribution[]
 
-  @@unique([provider, service, tagValue, onsetDate])
-  @@index([onsetDate])
+  @@unique([orgId, provider, service, tagValue, onsetDate])
+  @@index([orgId, onsetDate])
 }
 
 /// Links a cost change to a suspect deploy. An anomaly has one row per
@@ -97,11 +259,11 @@ model Attribution {
   deployId                  String
   deploy                    Deploy      @relation(fields: [deployId], references: [id], onDelete: Cascade)
   rank                      Int
-  confidence                Float       // 0..1
-  scores                    Json        // ScoreBreakdown: { timing, relevance, total }
-  evidence                  Json        // [{ file, line, detail, snippet }]
+  confidence                Float // 0..1
+  scores                    Json // ScoreBreakdown: { timing, relevance, total }
+  evidence                  Json // [{ file, line, detail, snippet }]
   explanation               String
-  explanationSource         String      // "heuristic" | "llm"
+  explanationSource         String // "heuristic" | "llm"
   estimatedMonthlyImpactUsd Float
   createdAt                 DateTime    @default(now())
 

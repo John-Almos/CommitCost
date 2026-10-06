@@ -21,3 +21,4 @@ export function createClient(): PrismaClient {
 }
 
 export type { PrismaClient };
+export type { AwsConnection, GitHubInstallation, Organization, SyncRun, TrackedRepo, User } from "@prisma/client";

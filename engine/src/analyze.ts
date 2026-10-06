@@ -21,7 +21,7 @@ export interface AnomalyReport {
 /** Detects anomalies and ranks suspect deploys for each. */
 export async function analyze(costs: CostRecord[], deploys: Deploy[], options: AnalyzeOptions = {}): Promise<AnomalyReport[]> {
   const attributionOpts = { ...DEFAULT_ATTRIBUTION_OPTIONS, ...options.attribution };
-  const bySha = new Map(deploys.map((d) => [d.commitSha, d]));
+  const byKey = new Map(deploys.map((d) => [`${d.repo}@${d.commitSha}`, d]));
   const reports: AnomalyReport[] = [];
 
   for (const anomaly of detectAnomalies(costs, options.anomaly)) {
@@ -31,7 +31,7 @@ export async function analyze(costs: CostRecord[], deploys: Deploy[], options: A
     const top = suspects[0];
     if (options.explainer && top && top.confidence >= 0.3) {
       try {
-        const text = await options.explainer.explain({ attribution: top, deploy: bySha.get(top.commitSha)! });
+        const text = await options.explainer.explain({ attribution: top, deploy: byKey.get(`${top.repo}@${top.commitSha}`)! });
         if (text.trim()) {
           top.explanation = text.trim();
           top.explanationSource = "llm";

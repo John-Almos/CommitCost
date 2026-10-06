@@ -25,6 +25,7 @@ const attribution: Attribution = {
     persistent: true,
     estimatedMonthlyImpactUsd: 2400,
   },
+  repo: "acme/app",
   commitSha: "abc1234def",
   prNumber: 7,
   title: "Show items",

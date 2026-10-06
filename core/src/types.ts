@@ -92,6 +92,8 @@ export interface ScoreBreakdown {
 /** One suspect deploy for one anomaly. */
 export interface Attribution {
   anomaly: CostAnomaly;
+  /** "owner/name". An organization can track several repos. */
+  repo: string;
   commitSha: string;
   prNumber: number | null;
   title: string;

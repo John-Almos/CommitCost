@@ -12,8 +12,9 @@ import { GROUND_TRUTH_PATH, seedMock } from "./seed.js";
  */
 export async function runDemo(db: PrismaClient): Promise<boolean> {
   const dataset = await seedMock(db);
-  const totals = await loadDailyServiceTotals(db);
-  const [costRows, deployRows] = await Promise.all([db.costRecord.count(), db.deploy.count()]);
+  const orgId = dataset.org.id;
+  const totals = await loadDailyServiceTotals(db, orgId);
+  const [costRows, deployRows] = await Promise.all([db.costRecord.count({ where: { orgId } }), db.deploy.count({ where: { orgId } })]);
   const total = totals.reduce((sum, t) => sum + t.amountUsd, 0);
 
   console.log();
@@ -26,7 +27,7 @@ export async function runDemo(db: PrismaClient): Promise<boolean> {
   console.log();
 
   // No LLM in the demo: it must run with zero credentials.
-  const reports = await runAnalysis(db, dataset.repo);
+  const reports = await runAnalysis(db, orgId);
   // An anomaly matches an injected change on the same service within 2 days of its onset.
   const near = (a: CostAnomaly, date: string) => Math.abs(Date.parse(a.onsetDate) - Date.parse(date)) <= 2 * 86_400_000;
   const expectedCause = (a: CostAnomaly) =>

@@ -10,6 +10,7 @@
     "providers",
     "engine",
     "action",
+    "platform",
     "cli",
     "web"
   ],
@@ -31,7 +32,8 @@
     "analyze": "npm run db:push && tsx cli/src/index.ts analyze",
     "dashboard": "npm run dev -w @commitcost/web",
     "build:web": "npm run build -w @commitcost/web",
-    "build:action": "npm run build -w @commitcost/action"
+    "build:action": "npm run build -w @commitcost/action",
+    "worker": "npm run db:push && npm run worker -w @commitcost/platform"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

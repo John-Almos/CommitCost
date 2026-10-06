@@ -137,6 +137,7 @@ export function heuristicExplanation(anomaly: CostAnomaly, c: ScoredCandidate): 
 export function toAttributions(anomaly: CostAnomaly, ranked: ScoredCandidate[], maxSuspects = DEFAULT_ATTRIBUTION_OPTIONS.maxSuspects): Attribution[] {
   return ranked.slice(0, maxSuspects).map((c, i) => ({
     anomaly,
+    repo: c.deploy.repo,
     commitSha: c.deploy.commitSha,
     prNumber: c.deploy.prNumber,
     title: c.deploy.title,
