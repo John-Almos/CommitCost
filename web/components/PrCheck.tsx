@@ -84,11 +84,34 @@ export function PrCheck({ examples, initial }: { examples: Example[]; initial: s
               {result.warnings.length === 0 ? "no cost risks" : `${result.warnings.length} warning${result.warnings.length === 1 ? "" : "s"}`}
             </p>
             {result.warnings.length === 0 ? (
-              <div className="callout">✅ No cost risks found. The Action stays quiet on this PR.</div>
+              <div className="callout">
+                {result.history.length ? "No cost-risky pattern in the diff, but it touches code that has raised the bill before." : "✅ No cost risks found. The Action stays quiet on this PR."}
+              </div>
             ) : (
               result.warnings.map((w, i) => <WarningCard key={`${w.file}:${w.line}:${w.detector}`} w={w} n={i + 1} />)
             )}
-            <details style={{ marginTop: 12 }} open={result.warnings.length > 0}>
+            {result.history.length > 0 && (
+              <div className="warning" style={{ marginTop: 10, borderLeftColor: "var(--accent)" }}>
+                <strong>Cost history of files in this diff</strong>
+                <table style={{ marginTop: 6, fontSize: 13 }}>
+                  <tbody>
+                    {result.history.map((h) => (
+                      <tr key={h.path}>
+                        <td className="mono" style={{ wordBreak: "break-all" }}>
+                          {h.path}
+                          <div className="muted" style={{ fontSize: 12, fontFamily: "inherit" }}>
+                            {h.changes.map((c) => `${c.prNumber ? `#${c.prNumber}` : c.title} +$${c.monthlyUsd.toLocaleString("en-US")}/mo`).join(", ")}
+                            {h.owners.length ? ` · ${h.owners.join(" ")}` : ""}
+                          </div>
+                        </td>
+                        <td className="num up-bad">+${h.increaseUsd.toLocaleString("en-US")}/mo</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            <details style={{ marginTop: 12 }} open={result.warnings.length > 0 || result.history.length > 0}>
               <summary>PR comment the Action posts</summary>
               <pre className="comment-preview">{result.comment}</pre>
             </details>

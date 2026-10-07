@@ -5,9 +5,10 @@
   "type": "module",
   "main": "src/index.ts",
   "dependencies": {
+    "@commitcost/action": "0.1.0",
     "@commitcost/core": "0.1.0",
     "@commitcost/db": "0.1.0",
-    "@commitcost/providers": "0.1.0",
-    "@commitcost/engine": "0.1.0"
+    "@commitcost/engine": "0.1.0",
+    "@commitcost/providers": "0.1.0"
   }
 }

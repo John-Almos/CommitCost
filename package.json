@@ -33,6 +33,9 @@
     "build:web": "npm run build -w @commitcost/web",
     "build:action": "npm run build -w @commitcost/action",
     "profile": "node scripts/preflight.mjs && npm run db:push && tsx cli/src/index.ts profile",
+    "receipts": "node scripts/preflight.mjs && npm run db:push && tsx cli/src/index.ts receipts",
+    "map": "node scripts/preflight.mjs && npm run db:push && tsx cli/src/index.ts map",
+    "fix": "node scripts/preflight.mjs && npm run db:push && tsx cli/src/index.ts fix",
     "prices:snapshot": "tsx scripts/build-price-snapshot.ts"
   },
   "devDependencies": {

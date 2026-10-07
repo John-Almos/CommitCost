@@ -198,3 +198,36 @@ aside .kv { grid-template-columns: 1fr; gap: 0; }
 aside .kv dt { margin-top: 8px; font-size: 12px; }
 .pr-check-layout { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 @media (max-width: 900px) { .pr-check-layout { grid-template-columns: 1fr; } }
+
+/* Cost receipts: verdict chips and the predicted-vs-measured bar. */
+.verdict { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); white-space: nowrap; }
+.verdict::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.verdict.on-target, .verdict.flagged { color: var(--good-text); }
+.verdict.under, .verdict.over { color: var(--ink-2); }
+.verdict.under::before, .verdict.over::before { background: var(--warning); }
+.verdict.missed, .verdict.wrong-direction { color: var(--critical-text); }
+.verdict.no-effect, .verdict.pending { color: var(--muted); }
+.pvm { position: relative; height: 22px; min-width: 160px; }
+.pvm-axis { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--axis); }
+.pvm-bar { position: absolute; height: 6px; border-radius: 3px; }
+.pvm-bar.pred { top: 3px; background: var(--track); }
+.pvm-bar.meas { top: 13px; background: var(--series); }
+.legend { display: flex; gap: 14px; font-size: 12px; color: var(--ink-2); flex-wrap: wrap; }
+.legend .swatch { display: inline-block; width: 12px; height: 6px; border-radius: 3px; margin-right: 6px; vertical-align: middle; }
+
+/* Code cost map: indented directory tree with signed bars. */
+.tree td { padding-top: 6px; padding-bottom: 6px; }
+.tree .path { white-space: nowrap; }
+.costbar { position: relative; height: 8px; background: transparent; min-width: 120px; }
+.costbar .mid { position: absolute; left: 50%; top: -3px; bottom: -3px; width: 1px; background: var(--axis); }
+.costbar .fill { position: absolute; top: 0; height: 8px; border-radius: 2px; }
+.costbar .fill.up { left: 50%; background: var(--critical); }
+.costbar .fill.down { right: 50%; background: var(--good); }
+.owner { font-size: 12px; color: var(--ink-2); white-space: nowrap; }
+
+/* Fix patch card. */
+.fix-saving { font-size: 22px; font-weight: 650; color: var(--good-text); }
+.copy-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
+.cmd { background: var(--code-bg); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; overflow-wrap: anywhere; }
+/* Grid children must be allowed to shrink, or a wide diff in the side panel widens the page. */
+.layout-main > * { min-width: 0; }

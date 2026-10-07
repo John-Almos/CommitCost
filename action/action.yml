@@ -18,11 +18,14 @@ inputs:
     description: "AWS region for resources whose diff doesn't name one. Defaults to the cost profile's main region, else us-east-1."
     default: ""
   cost-profile:
-    description: "Path to a cost profile JSON exported with `npm run profile` (your measured usage and effective rates), used to calibrate estimates with your bill."
+    description: "Path to a cost profile JSON exported with `npm run profile`: your measured usage and effective rates, the per-check corrections learned from cost receipts, and the files whose past changes raised the bill."
     default: ""
   assumptions:
     description: "Optional JSON overriding the cost model's defaults, e.g. {\"cacheHitRate\":0.9,\"requestsPerMonth\":30000000}."
     default: ""
+  history-min-usd:
+    description: "With a cost profile that includes history, a PR with no warnings still gets a comment when it touches a file whose past changes added at least this many dollars per month."
+    default: "1000"
   dry-run:
     description: "When \"true\", writes the review to the job summary only and never comments."
     default: "false"

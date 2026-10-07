@@ -9,7 +9,7 @@ import { SAMPLE_PRS } from "./fixtures.js";
 import { GitHub, type Fetch } from "./github.js";
 import { SnapshotPriceBook, buildUsageProfile } from "@commitcost/engine";
 import { readCostProfileFile } from "./costProfile.js";
-import { COMMENT_MARKER, renderComment, reviewFiles } from "./review.js";
+import { COMMENT_MARKER, historyFor, renderComment, reviewFiles } from "./review.js";
 import { run } from "./run.js";
 
 const toDiffs = (files: readonly { filename: string; patch?: string }[]) => files.map((f) => ({ path: f.filename, patch: f.patch }));
@@ -68,6 +68,26 @@ describe("cost profile", () => {
     expect(body).toContain("30 instances (from your bill) × ($0.384 − $0.192)/h × 730 h");
     expect(body).toContain("Volumes calibrated with your bill.");
     expect(() => readCostProfileFile(undefined, { assumptions: "{nope" })).toThrow(/assumptions must be a JSON object/);
+  });
+});
+
+describe("receipts and history in the PR check", () => {
+  const calibration = { "compute-size": { detector: "compute-size" as const, factor: 1.5, medianRatio: 2.25, samples: 2, from: [] } };
+
+  it("adjusts estimates with the learned correction and says why", () => {
+    const [plain] = reviewFiles(toDiffs(SAMPLE_PRS.infra.files));
+    const [w] = reviewFiles(toDiffs(SAMPLE_PRS.infra.files), { calibration });
+    expect(plain!.calibrated).toBeUndefined();
+    expect(w!.detector).toBe("compute-size");
+    expect(w!.calibrated!.monthlyUsd).toBeCloseTo(w!.impact.monthlyUsd! * 1.5);
+    const body = renderComment([w!], ctx);
+    expect(body).toContain("×1.50 from receipts");
+    expect(body).toContain("ran 2.3× low on your bill across 2 merged PRs");
+  });
+
+  it("matches history to touched runtime files only", () => {
+    const hist = [{ path: "a/x.ts", increaseUsd: 500, owners: [], changes: [] }, { path: "a/x.test.ts", increaseUsd: 900, owners: [], changes: [] }];
+    expect(historyFor([{ path: "a/x.ts" }, { path: "a/x.test.ts" }, { path: "b.ts" }], hist).map((h) => h.path)).toEqual(["a/x.ts"]);
   });
 });
 
@@ -134,6 +154,21 @@ describe("run", () => {
     expect(fixed.comments[0]!.body).toContain("no cost risks found");
   });
 
+  const history = [
+    { path: "services/api/src/routes/orders.ts", increaseUsd: 2850, owners: ["@acme/api-team"], changes: [{ prNumber: 128, title: "Show line items", monthlyUsd: 2850 }] },
+  ];
+
+  it("comments on a PR with no warnings when it touches a file that raised the bill", async () => {
+    const files = [{ filename: "services/api/src/routes/orders.ts", status: "modified", patch: "@@ -1 +1 @@\n-const a = 1;\n+const a = 2;" }];
+    const quiet = fakeGitHub(files);
+    expect((await run(quiet.gh, { ...input, history, historyMinUsd: 5000 })).action).toBe("skipped-clean");
+    const loud = fakeGitHub(files);
+    const result = await run(loud.gh, { ...input, history });
+    expect(result.action).toBe("created");
+    expect(result.body).toContain("this PR changes code that has raised the bill before");
+    expect(result.body).toContain("| `services/api/src/routes/orders.ts` | +$2,850/month | #128 +$2,850/mo | @acme/api-team |");
+  });
+
   it("writes nothing in dry-run mode", async () => {
     const { gh, writes } = fakeGitHub(SAMPLE_PRS.nPlusOne.files);
     expect((await run(gh, { ...input, dryRun: true })).action).toBe("dry-run");
@@ -186,7 +221,7 @@ describe("bundled action (dist/index.cjs)", () => {
     });
     server.close();
 
-    expect(stdout).toContain("1 cost warning(s); comment created.");
+    expect(stdout).toContain("1 cost warning(s), 0 file(s) with cost history; comment created.");
     expect(stdout).toContain("::warning file=services/api/src/routes/orders.ts,line=44,title=Database query inside a loop (N+1)::");
     expect(posted).toHaveLength(1);
     expect(posted[0]).toContain("Database query inside a loop (N+1)");

@@ -7,11 +7,13 @@ import {
   effectiveRatio,
   fmtRate,
   fmtUsd,
+  learnedProfile,
   type CostProfileFile,
   type PriceSnapshot,
   type UsageProfile,
 } from "@commitcost/engine";
 import type { PriceBook } from "@commitcost/core";
+import { loadHistory } from "./history.js";
 import { bold, dim } from "./render.js";
 
 /** Live prices saved by `sync` (COMMITCOST_PRICING=live), else the bundled snapshot. */
@@ -26,7 +28,16 @@ export async function exportProfile(db: PrismaClient, out: string, days?: number
   if (records.length === 0) throw new Error("No usage stored yet. Run `npm run seed` (mock) or `npm run sync` (real) first.");
   const prices = localPriceBook();
   const usage = buildUsageProfile(records, prices, { days });
-  const file: CostProfileFile = { version: 1, generatedAt: new Date().toISOString(), region: usage?.primaryRegion, priceSource: prices.name, usage };
+  // Corrections and costly files come from analyzed history; a fresh database has none yet.
+  const learned = (await db.attribution.count()) > 0 ? learnedProfile(await loadHistory(db)) : undefined;
+  const file: CostProfileFile = {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    region: usage?.primaryRegion,
+    priceSource: prices.name,
+    usage,
+    ...(learned && { calibration: learned.calibration, history: learned.history }),
+  };
   mkdirSync(dirname(out), { recursive: true });
   writeFileSync(out, `${JSON.stringify(file, null, 2)}\n`);
   return file;

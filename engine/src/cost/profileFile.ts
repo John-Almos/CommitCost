@@ -1,3 +1,5 @@
+import type { FileCostHistory } from "../codeMap.js";
+import type { CalibrationTable } from "../receipts.js";
 import type { CostAssumptions } from "./context.js";
 import type { UsageProfile } from "./profile.js";
 
@@ -14,6 +16,10 @@ export interface CostProfileFile {
   priceSource?: string;
   usage?: UsageProfile;
   assumptions?: Partial<CostAssumptions>;
+  /** Per-detector corrections learned from cost receipts (predicted vs measured on merged PRs). */
+  calibration?: CalibrationTable;
+  /** Files whose past changes raised the bill, so the PR check can say so when they're touched again. */
+  history?: FileCostHistory[];
 }
 
 export function parseCostProfile(json: string): CostProfileFile {

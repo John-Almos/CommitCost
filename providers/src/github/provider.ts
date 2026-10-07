@@ -85,6 +85,23 @@ export class GitHubProvider implements VcsProvider {
     return deploys.sort((a, b) => a.mergedAt.localeCompare(b.mergedAt));
   }
 
+  /**
+   * The CODEOWNERS file from the default branch, from any of the three places
+   * GitHub looks, or null when the repo has none.
+   */
+  async getCodeowners(): Promise<string | null> {
+    const repo = this.options.repo;
+    for (const path of [".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS"]) {
+      try {
+        const file = await this.client.get<{ content?: string; encoding?: string }>(`/repos/${repo}/contents/${path}`);
+        if (file.content && file.encoding === "base64") return Buffer.from(file.content, "base64").toString("utf8");
+      } catch (err) {
+        if ((err as { status?: number }).status !== 404) throw err;
+      }
+    }
+    return null;
+  }
+
   private async mergedPulls(repo: string, branch: string, from: string, to: string): Promise<GhPull[]> {
     const out: GhPull[] = [];
     const base = encodeURIComponent(branch);

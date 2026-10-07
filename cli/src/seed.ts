@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { clearMockData, saveCostRecords, saveDeploys, saveUsageRecords, type PrismaClient } from "@commitcost/db";
+import { clearMockData, saveCodeowners, saveCostRecords, saveDeploys, saveUsageRecords, type PrismaClient } from "@commitcost/db";
 import { MockCostProvider, MockVcsProvider, generateMockDataset, type MockDataset, type MockOptions } from "@commitcost/providers";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
@@ -24,6 +24,7 @@ export async function seedMock(db: PrismaClient, options: MockOptions = {}): Pro
   await saveCostRecords(db, costs);
   await saveUsageRecords(db, usage);
   await saveDeploys(db, deploys);
+  await saveCodeowners(db, dataset.repo, dataset.codeowners);
 
   mkdirSync(dirname(GROUND_TRUTH_PATH), { recursive: true });
   writeFileSync(

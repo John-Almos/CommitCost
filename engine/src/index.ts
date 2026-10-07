@@ -9,3 +9,7 @@ export { classifyDataCall } from "./diff/calls.js";
 export { findLoops, isLoopHeader } from "./diff/loops.js";
 export * from "./impact.js";
 export * from "./cost/index.js";
+export * from "./receipts.js";
+export * from "./codeMap.js";
+export * from "./fixPatch.js";
+export * from "./insights.js";
