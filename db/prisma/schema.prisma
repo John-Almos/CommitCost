@@ -87,6 +87,14 @@ model DeployFile {
   @@index([deployId])
 }
 
+/// Per-repository files CommitCost reads besides the history: for now the
+/// CODEOWNERS file, which maps attributed cost onto the code's owners.
+model RepoMeta {
+  repo       String   @id // "owner/name"
+  codeowners String?
+  updatedAt  DateTime @updatedAt
+}
+
 /// A significant deviation in a service's daily cost from its baseline.
 /// This is the "cost change" that attributions point at.
 model CostAnomaly {

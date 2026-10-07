@@ -34,6 +34,8 @@ See `db/prisma/schema.prisma` for the full definitions.
 
 **Attribution**: links an anomaly to one suspect deploy, with rank (1 is most likely), confidence (0 to 1), a score breakdown (`timing`, `relevance`, `total`), the diff evidence (file, line, snippet), the explanation and its source (heuristic or LLM), and estimated monthly impact (daily delta × 30). An anomaly has one row per candidate, so "links a cost change to one or more deploys" is a ranked list.
 
+**RepoMeta**: per-repo files read besides the history; for now the `CODEOWNERS` file, which the code cost map uses to put attributed cost on owners.
+
 ## SQLite and Postgres
 
 Prisma can't switch providers from an environment variable, so `db/prisma/schema.prisma` targets SQLite and avoids provider-specific features (no enums, no scalar lists). `npm run db:schema:postgres` writes a copy with only the provider changed.
@@ -47,6 +49,14 @@ Prisma can't switch providers from an environment variable, so `db/prisma/schema
 `engine/src/diff/` parses unified-diff patches and runs detectors that each return findings with file, line, affected services, direction, confidence, why it costs money, a suggested fix and, where the diff states both values, a cost ratio. Attribution uses them to score relevance. The GitHub Action runs the same detectors on PR diffs and prices each finding with the cost model in `engine/src/cost/` (see [COST_MODEL.md](COST_MODEL.md)), so a pattern that explains a past spike is also what gets flagged before merge.
 
 Detectors work line by line, using indentation for loop scope, so they handle JS/TS, Python, YAML, HCL and CDK without a parser per language. The trade-off is that a loop body which runs past the end of a diff hunk is cut at the hunk boundary.
+
+## Receipts, code map and fix patches
+
+These are pure functions in `engine/src/` over stored results, so the CLI, dashboard and Action share them. `insights.ts` turns stored rank-1 attributions (`loadTopAttributions`) and deploys into their inputs.
+
+- `receipts.ts`: `buildReceipt` prices a change as the PR check would have the day before it merged (`priceDeploy`) and compares the confident findings with the persistent anomalies attributed to it, restricted to the services the bill moved on. `learnCalibration` takes the median measured ÷ predicted per detector in log space and shrinks it toward 1 by n/(n+1); `calibrate` applies it in `reviewFiles`.
+- `codeMap.ts`: allocates each change's measured impact to its evidence files, rolls it up to directories, and matches CODEOWNERS rules (gitignore-style patterns, last match wins). `costHistory` is the compact per-file list written to the cost profile.
+- `fixPatch.ts`: inverts only the hunks that contain an increase finding or an evidence line, recomputing hunk counts from the body and shifting later hunks by the selected ones, so `git apply` takes it on the merged file. Tested against real `git apply` in `fixPatch.test.ts`.
 
 ## Dashboard
 

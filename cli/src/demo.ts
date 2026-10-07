@@ -1,8 +1,9 @@
 import { relative } from "node:path";
 import { SERVICES, type CostAnomaly } from "@commitcost/core";
 import { loadDailyServiceTotals, type PrismaClient } from "@commitcost/db";
-import { priceDeploy, totalMonthly } from "@commitcost/engine";
+import { buildReceipts, codeMapFrom, fixFor, learnCalibration, priceDeploy, totalMonthly } from "@commitcost/engine";
 import { runAnalysis } from "./analyzeCmd.js";
+import { loadHistory, renderCodeMap, renderFix, renderReceipts } from "./history.js";
 import { bold, dim, green, red, renderReports, renderServiceCharts, renderSpikeTable, usd } from "./render.js";
 import { GROUND_TRUTH_PATH, seedMock } from "./seed.js";
 
@@ -72,6 +73,18 @@ export async function runDemo(db: PrismaClient): Promise<boolean> {
       `  ${spike.title.slice(0, 58).padEnd(58)} measured ${usd(measured).padStart(8)}/mo  modeled ${modeled !== undefined ? usd(modeled).padStart(8) : "       ?"}/mo ${dim(`${ratio !== undefined ? `${ratio.toFixed(2)}x` : ""} ${basis}`)}`,
     );
   }
+  console.log();
+
+  // The history features run on what was stored, exactly as they would on synced data.
+  const history = await loadHistory(db, dataset.repo);
+  const receipts = buildReceipts(history);
+  console.log(renderReceipts(receipts, learnCalibration(receipts)));
+  console.log();
+  console.log(renderCodeMap(codeMapFrom(history.deploys, history.attributions, history.codeowners), 5));
+  console.log();
+  const n1 = dataset.spikes.find((s) => s.key === "orders-n-plus-one");
+  const fix = n1 && fixFor(history.deploys.find((d) => d.commitSha === n1.commitSha)!, history.attributions, history.deploys);
+  if (fix) console.log(`${renderFix(fix)}\n${dim(`npm run fix -- ${fix.prNumber} prints the patch.`)}`);
   console.log();
   console.log(dim(`Ground truth: ${relative(process.cwd(), GROUND_TRUTH_PATH)}. Results are stored for the dashboard (npm run dashboard, http://localhost:3000).`));
   console.log();

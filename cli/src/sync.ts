@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import { addDays, toIsoDate } from "@commitcost/core";
-import { latestCostDate, latestDeployDate, saveCostRecords, saveDeploys, saveUsageRecords, type PrismaClient } from "@commitcost/db";
+import { latestCostDate, latestDeployDate, saveCodeowners, saveCostRecords, saveDeploys, saveUsageRecords, type PrismaClient } from "@commitcost/db";
 import { writeLocalPrices } from "@commitcost/db";
 import { stripRegionPrefix } from "@commitcost/engine";
 import { AwsCostExplorerProvider, AwsPriceList, FileCache, GitHubProvider } from "@commitcost/providers";
@@ -45,7 +45,9 @@ export async function sync(db: PrismaClient, config: SyncConfig, cacheDir: strin
   log(`GitHub: fetching merged changes on ${config.github.repo} ${deployStart} → ${end}...`);
   const deploys = await github.getDeploys({ start: deployStart, end });
   await saveDeploys(db, deploys);
-  log(`GitHub: stored ${deploys.length} deploys (${github.client.requestCount} API requests).`);
+  const codeowners = await github.getCodeowners();
+  await saveCodeowners(db, config.github.repo, codeowners);
+  log(`GitHub: stored ${deploys.length} deploys${codeowners ? " and the CODEOWNERS file" : " (no CODEOWNERS file found)"} (${github.client.requestCount} API requests).`);
 
   return { costs: costs.length, usage: usage.length, deploys: deploys.length, start: fullStart, end };
 }

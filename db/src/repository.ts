@@ -121,7 +121,19 @@ export async function clearMockData(db: PrismaClient, mockRepo: string): Promise
     db.costRecord.deleteMany({ where: { source: "mock" } }),
     db.usageRecord.deleteMany({ where: { source: "mock" } }),
     db.deploy.deleteMany({ where: { repo: mockRepo } }),
+    db.repoMeta.deleteMany({ where: { repo: mockRepo } }),
   ]);
+}
+
+/** Stores the repository's CODEOWNERS file (null when it has none). */
+export async function saveCodeowners(db: PrismaClient, repo: string, codeowners: string | null): Promise<void> {
+  await db.repoMeta.upsert({ where: { repo }, create: { repo, codeowners }, update: { codeowners } });
+}
+
+/** The stored CODEOWNERS file for a repo, or for the only repo when none is given. */
+export async function loadCodeowners(db: PrismaClient, repo?: string): Promise<string | undefined> {
+  const row = repo ? await db.repoMeta.findUnique({ where: { repo } }) : await db.repoMeta.findFirst({ orderBy: { updatedAt: "desc" } });
+  return row?.codeowners ?? undefined;
 }
 
 export interface DailyServiceTotal {
@@ -174,6 +186,37 @@ export async function loadDeploys(db: PrismaClient, repo?: string): Promise<Depl
     url: d.url ?? undefined,
     files: d.files.map((f) => ({ path: f.path, additions: f.additions, deletions: f.deletions, patch: f.patch ?? undefined })),
   }));
+}
+
+/** Every stored anomaly with its rank-1 suspect, as plain data for receipts, the code cost map and fix patches. */
+export async function loadTopAttributions(db: PrismaClient): Promise<TopAttributionRow[]> {
+  const rows = await db.attribution.findMany({ where: { rank: 1 }, include: { anomaly: true, deploy: { select: { commitSha: true } } } });
+  return rows.map((r) => ({
+    anomalyId: r.anomalyId,
+    service: r.anomaly.service as Service,
+    tagValue: r.anomaly.tagValue,
+    onsetDate: toIsoDate(r.anomaly.onsetDate),
+    direction: r.anomaly.direction as "increase" | "decrease",
+    persistent: r.anomaly.persistent,
+    monthlyUsd: r.anomaly.estimatedMonthlyImpactUsd,
+    commitSha: r.deploy.commitSha,
+    confidence: r.confidence,
+    evidence: ((r.evidence as unknown as { file: string; line?: number }[] | null) ?? []).map((e) => ({ file: e.file, line: e.line })),
+  }));
+}
+
+/** Same shape as the engine's TopAttribution (db doesn't depend on the engine at runtime). */
+export interface TopAttributionRow {
+  anomalyId: string;
+  service: Service;
+  tagValue: string;
+  onsetDate: string;
+  direction: "increase" | "decrease";
+  persistent: boolean;
+  monthlyUsd: number;
+  commitSha: string;
+  confidence: number;
+  evidence: { file: string; line?: number }[];
 }
 
 /** Latest stored cost day for a source, so syncs can be incremental. */

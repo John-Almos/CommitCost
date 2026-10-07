@@ -62,7 +62,11 @@ export function WarningCard({ w, n }: { w: Warning; n: number }) {
           {n}. {w.title}
         </strong>
         <span className="amount up-bad">
-          {w.impact.monthlyUsd != null ? `${w.impact.estimate.range?.lowUsd === 0 ? "≤" : "~"}${usd(w.impact.monthlyUsd, { sign: true })}/mo` : "impact varies"}
+          {w.calibrated
+            ? `~${usd(w.calibrated.monthlyUsd, { sign: true })}/mo`
+            : w.impact.monthlyUsd != null
+              ? `${w.impact.estimate.range?.lowUsd === 0 ? "≤" : "~"}${usd(w.impact.monthlyUsd, { sign: true })}/mo`
+              : "impact varies"}
         </span>
       </div>
       <div className="mono muted">
@@ -77,6 +81,14 @@ export function WarningCard({ w, n }: { w: Warning; n: number }) {
           {w.impact.summary} <span className={`badge basis-${w.impact.estimate.basis}`}>{BASIS_LABELS[w.impact.estimate.basis]}</span>
           <Calculation e={w.impact.estimate} />
         </dd>
+        {w.calibrated && (
+          <>
+            <dt>Adjusted by receipts</dt>
+            <dd>
+              {usd(w.calibrated.monthlyUsd, { sign: true })}/mo (×{w.calibrated.factor.toFixed(2)}). {w.calibrated.note}
+            </dd>
+          </>
+        )}
         <dt>Suggested fix</dt>
         <dd>{w.suggestion}</dd>
         <dt>Confidence</dt>

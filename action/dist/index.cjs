@@ -1206,11 +1206,11 @@ var crossRegionTransfer2 = (f, ctx, patch) => {
   const putCount = puts.length ? c.usage("objects written a month (PUT requests)", sumLines(puts).quantity, "requests/month", usageRef(puts, void 0, ctx)) : 0;
   if (configured === void 0) c.assumptions.push("Every object written to S3 in this region is in the replicated bucket. Upper bound when other buckets take writes too.");
   c.assumptions.push("First month shown. Replica storage adds up: each month's data is stored again every month after.");
-  const monthly = gb * transfer + gb * pStore + putCount * pPut;
+  const monthly2 = gb * transfer + gb * pStore + putCount * pPut;
   return c.done({
     basis: "usage-calibrated",
     formula: `${fmtQty(gb)} GB \xD7 ${fmtRate(transfer)}/GB transfer + ${fmtQty(gb)} GB \xD7 ${fmtRate(pStore)}/GB-month replica + ${fmtQty(putCount)} PUTs \xD7 ${fmtRate(pPut)}`,
-    monthlyUsd: monthly,
+    monthlyUsd: monthly2,
     upperBound: configured === void 0
   });
 };
@@ -1313,8 +1313,21 @@ function parseCostProfile(json) {
   return data;
 }
 
+// ../engine/src/receipts.ts
+function calibrate(detector, monthlyUsd, table) {
+  const c = table?.[detector];
+  if (!c || monthlyUsd === void 0 || Math.abs(c.factor - 1) < 0.05) return void 0;
+  const dir = c.medianRatio >= 1 ? `${c.medianRatio.toFixed(1)}\xD7 low` : `${(1 / c.medianRatio).toFixed(1)}\xD7 high`;
+  return {
+    monthlyUsd: monthlyUsd * c.factor,
+    factor: c.factor,
+    samples: c.samples,
+    note: `Estimates from this check ran ${dir} on your bill across ${c.samples} merged PR${c.samples === 1 ? "" : "s"}, so this one is adjusted \xD7${c.factor.toFixed(2)}.`
+  };
+}
+
 // src/costProfile.ts
-function readCostProfileFile(path, inputs = {}) {
+function readProfile(path, inputs = {}) {
   const file = path ? parseCostProfile((0, import_node_fs.readFileSync)(path, "utf8")) : void 0;
   let assumptions;
   try {
@@ -1323,9 +1336,13 @@ function readCostProfileFile(path, inputs = {}) {
     throw new Error('assumptions must be a JSON object, e.g. {"cacheHitRate":0.9}');
   }
   return {
-    region: inputs.region || file?.region,
-    usage: file?.usage,
-    assumptions: { ...file?.assumptions, ...assumptions }
+    cost: {
+      region: inputs.region || file?.region,
+      usage: file?.usage,
+      assumptions: { ...file?.assumptions, ...assumptions }
+    },
+    calibration: file?.calibration,
+    history: file?.history
   };
 }
 
@@ -1389,7 +1406,16 @@ var SKIP = /(^|\/)(node_modules|vendor|dist|build|\.next|coverage)\/|\.(min\.js|
 function reviewFiles(files, options = {}) {
   const opts = { ...DEFAULT_REVIEW_OPTIONS, ...options };
   const ctx = toCostContext({ ...opts.cost, serviceSpend: opts.serviceSpend ?? opts.cost?.serviceSpend });
-  return files.filter((f) => f.patch && !SKIP.test(f.path)).flatMap((f) => analyzeFile(f).map((finding) => ({ finding, patch: f.patch }))).filter(({ finding }) => finding.direction === "increase" && finding.confidence >= opts.minConfidence).map(({ finding, patch }) => ({ ...finding, impact: estimateImpact(finding, ctx, patch) })).sort((a, b) => (b.impact.monthlyUsd ?? 0) - (a.impact.monthlyUsd ?? 0) || b.confidence - a.confidence);
+  return files.filter((f) => f.patch && !SKIP.test(f.path)).flatMap((f) => analyzeFile(f).map((finding) => ({ finding, patch: f.patch }))).filter(({ finding }) => finding.direction === "increase" && finding.confidence >= opts.minConfidence).map(({ finding, patch }) => {
+    const impact = estimateImpact(finding, ctx, patch);
+    return { ...finding, impact, calibrated: calibrate(finding.detector, impact.monthlyUsd, opts.calibration) };
+  }).sort((a, b) => monthly(b) - monthly(a) || b.confidence - a.confidence);
+}
+var monthly = (w) => w.calibrated?.monthlyUsd ?? w.impact.monthlyUsd ?? 0;
+function historyFor(files, history, minUsd = 0) {
+  if (!history?.length) return [];
+  const touched = new Set(files.filter((f) => !SKIP.test(f.path)).map((f) => f.path));
+  return history.filter((h) => touched.has(h.path) && h.increaseUsd >= minUsd).sort((a, b) => b.increaseUsd - a.increaseUsd);
 }
 function link(ctx, w) {
   const where = `${w.file}${w.line ? `:${w.line}` : ""}`;
@@ -1397,15 +1423,26 @@ function link(ctx, w) {
   return `[\`${where}\`](https://github.com/${ctx.repo}/blob/${ctx.headSha}/${w.file.split("/").map(encodeURIComponent).join("/")}#L${w.line})`;
 }
 var confidenceLabel = (c) => c >= 0.8 ? "high" : c >= 0.6 ? "medium" : "low";
-function renderComment(warnings, ctx) {
+function renderComment(warnings, ctx, history = []) {
   const short = ctx.headSha.slice(0, 7);
-  if (warnings.length === 0) {
+  if (warnings.length === 0 && history.length === 0) {
     return `${COMMENT_MARKER}
 ### \u2705 CommitCost: no cost risks found
 
 The latest changes (${short}) no longer include the cost-risky patterns flagged earlier.`;
   }
-  const rows = warnings.map((w, i) => `| ${i + 1} | ${w.title} | ${link(ctx, w)} | ${w.impact.summary} | ${confidenceLabel(w.confidence)} |`);
+  if (warnings.length === 0) {
+    return [
+      COMMENT_MARKER,
+      "### \u{1F4CD} CommitCost: this PR changes code that has raised the bill before",
+      "",
+      "No cost-risky pattern was found in the diff itself.",
+      "",
+      ...renderHistory(history),
+      `<sub>Checked ${short}. This comment updates on every push.</sub>`
+    ].join("\n");
+  }
+  const rows = warnings.map((w, i) => `| ${i + 1} | ${w.title} | ${link(ctx, w)} | ${impactCell(w)} | ${confidenceLabel(w.confidence)} |`);
   const details = warnings.map((w, i) => {
     const lines = [
       `<details${i === 0 ? " open" : ""}><summary><b>${i + 1}. ${w.title}</b> in ${link(ctx, w)}</summary>`,
@@ -1414,6 +1451,7 @@ The latest changes (${short}) no longer include the cost-risky patterns flagged 
       "",
       `**Estimated impact:** ${w.impact.summary} _(${BASIS_LABELS[w.impact.estimate.basis]})_`,
       "",
+      ...w.calibrated ? [`**Adjusted by your cost receipts:** \u2248 ${fmtUsd(w.calibrated.monthlyUsd, { sign: true })}/month. ${w.calibrated.note}`, ""] : [],
       ...renderCalculation(w),
       `**Suggested fix:** ${w.suggestion}`,
       "",
@@ -1434,8 +1472,31 @@ The latest changes (${short}) no longer include the cost-risky patterns flagged 
     "",
     ...details,
     "",
+    ...renderHistory(history),
     `<sub>Checked ${short}. ${pricingNote(warnings)} This comment updates on every push.</sub>`
   ].join("\n");
+}
+function impactCell(w) {
+  if (!w.calibrated) return w.impact.summary;
+  return `\u2248 ${fmtUsd(w.calibrated.monthlyUsd, { sign: true })}/month <sub>model ${w.impact.summary}, \xD7${w.calibrated.factor.toFixed(2)} from receipts</sub>`;
+}
+function renderHistory(history) {
+  if (history.length === 0) return [];
+  const rows = history.slice(0, 8).map((h) => {
+    const past = h.changes.slice(0, 3).map((c) => `${c.prNumber ? `#${c.prNumber}` : c.title} ${fmtUsd(c.monthlyUsd, { sign: true })}/mo`).join(", ");
+    return `| \`${h.path}\` | ${fmtUsd(h.increaseUsd, { sign: true })}/month | ${past} | ${h.owners.join(" ") || "none"} |`;
+  });
+  return [
+    "<details open><summary><b>Cost history of files in this PR</b></summary>",
+    "",
+    "Earlier changes to these files were traced to increases that are still on the bill. Worth a look from their owners.",
+    "",
+    "| File | Added to the bill | By | Owners |",
+    "|---|---|---|---|",
+    ...rows,
+    "</details>",
+    ""
+  ];
 }
 function renderCalculation(w) {
   const e = w.impact.estimate;
@@ -1466,20 +1527,20 @@ function pricingNote(warnings) {
 // src/run.ts
 async function run(gh, input2) {
   const files = await gh.listPrFiles(input2.repo, input2.prNumber);
-  const warnings = reviewFiles(
-    files.filter((f) => f.status !== "removed").map((f) => ({ path: f.filename, patch: f.patch })),
-    { minConfidence: input2.minConfidence, serviceSpend: input2.serviceSpend, cost: input2.cost }
-  );
-  const body = renderComment(warnings, { repo: input2.repo, headSha: input2.headSha });
-  if (input2.dryRun) return { warnings, body, action: "dry-run" };
+  const diffs = files.filter((f) => f.status !== "removed").map((f) => ({ path: f.filename, patch: f.patch }));
+  const warnings = reviewFiles(diffs, { minConfidence: input2.minConfidence, serviceSpend: input2.serviceSpend, cost: input2.cost, calibration: input2.calibration });
+  const touched = historyFor(diffs, input2.history);
+  const history = warnings.length ? touched : touched.filter((h) => h.increaseUsd >= (input2.historyMinUsd ?? 1e3));
+  const body = renderComment(warnings, { repo: input2.repo, headSha: input2.headSha }, history);
+  if (input2.dryRun) return { warnings, history, body, action: "dry-run" };
   const existing = (await gh.listComments(input2.repo, input2.prNumber)).find((c) => c.body?.includes(COMMENT_MARKER));
   if (existing) {
     if (existing.body !== body) await gh.updateComment(input2.repo, existing.id, body);
-    return { warnings, body, action: "updated" };
+    return { warnings, history, body, action: "updated" };
   }
-  if (warnings.length === 0) return { warnings, body, action: "skipped-clean" };
+  if (warnings.length === 0 && history.length === 0) return { warnings, history, body, action: "skipped-clean" };
   await gh.createComment(input2.repo, input2.prNumber, body);
-  return { warnings, body, action: "created" };
+  return { warnings, history, body, action: "created" };
 }
 
 // src/main.ts
@@ -1504,17 +1565,21 @@ async function main() {
   if (!(minConfidence >= 0 && minConfidence <= 1)) throw new Error("min-confidence must be between 0 and 1");
   const spendRaw = input("service-spend");
   const serviceSpend = spendRaw ? JSON.parse(spendRaw) : void 0;
-  const cost = readCostProfileFile(input("cost-profile") || void 0, {
+  const profile = readProfile(input("cost-profile") || void 0, {
     region: input("region") || void 0,
     assumptions: input("assumptions") || void 0
   });
+  const historyMinUsd = Number(input("history-min-usd") || 1e3);
   const result = await run(new GitHub(token, void 0, process.env.GITHUB_API_URL || void 0), {
     repo: process.env.GITHUB_REPOSITORY,
     prNumber: event.pull_request.number,
     headSha: event.pull_request.head.sha,
     minConfidence,
     serviceSpend,
-    cost,
+    cost: profile.cost,
+    calibration: profile.calibration,
+    history: profile.history,
+    historyMinUsd: Number.isFinite(historyMinUsd) ? historyMinUsd : 1e3,
     dryRun: input("dry-run") === "true"
   }).catch((err) => {
     if (err.status === 403) {
@@ -1524,7 +1589,7 @@ async function main() {
     throw err;
   });
   if (!result) return;
-  console.log(`CommitCost: ${result.warnings.length} cost warning(s); comment ${result.action}.`);
+  console.log(`CommitCost: ${result.warnings.length} cost warning(s), ${result.history.length} file(s) with cost history; comment ${result.action}.`);
   for (const w of result.warnings) {
     if (w.side === "new" && w.line) console.log(`::warning file=${escapeProperty(w.file)},line=${w.line},title=${escapeProperty(w.title)}::${escapeData(`${w.why} Rough impact: ${w.impact.summary}.`)}`);
   }

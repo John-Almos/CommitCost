@@ -40,6 +40,17 @@ const pr = (number: number, merged_at: string | null, updated_at: string, sha = 
 const PULLS = "/repos/acme/app/pulls?state=closed&base=main&sort=updated&direction=desc&per_page=100";
 
 describe("GitHubProvider", () => {
+  it("reads CODEOWNERS from the first place GitHub looks that has one", async () => {
+    const { fetch, calls } = fakeFetch({
+      "/repos/acme/app/contents/CODEOWNERS": { body: { content: Buffer.from("* @acme/core\n").toString("base64"), encoding: "base64" } },
+    });
+    const gh = new GitHubProvider({ repo: "acme/app", client: new GitHubClient({ fetch }) });
+    expect(await gh.getCodeowners()).toBe("* @acme/core\n");
+    expect(calls.map((c) => c.path)).toEqual(["/repos/acme/app/contents/.github/CODEOWNERS", "/repos/acme/app/contents/CODEOWNERS"]);
+    const none = new GitHubProvider({ repo: "acme/app", client: new GitHubClient({ fetch: fakeFetch({}).fetch }) });
+    expect(await none.getCodeowners()).toBeNull();
+  });
+
   it("returns merged PRs in range with their files, plus direct pushes", async () => {
     const { fetch, calls } = fakeFetch({
       "/repos/acme/app": { body: { default_branch: "main" } },

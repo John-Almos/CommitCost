@@ -1,9 +1,11 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { CopyButton } from "@/components/CopyButton";
 import { ServiceChart } from "@/components/ServiceChart";
 import { Calculation, DirectionBadge, Diff, Meter, ShaLink, WarningCard } from "@/components/ui";
 import { getAnomaly } from "@/lib/data";
-import { fmtRate } from "@commitcost/engine";
+import { getFix } from "@/lib/history";
+import { fmtRate, type CostFix } from "@commitcost/engine";
 import type { ModeledImpact } from "@/lib/data";
 import { SERVICE_NAMES, fmtDate, pct, usd, usdFull } from "@/lib/format";
 
@@ -37,6 +39,43 @@ function ModeledVsMeasured({ modeled, measured, persistent }: { modeled: Modeled
   );
 }
 
+/** A partial revert of the lines behind the increase, with what it would save today. */
+function FixCard({ fix }: { fix: CostFix }) {
+  const pr = fix.prNumber ? `#${fix.prNumber}` : fix.commitSha.slice(0, 7);
+  const file = `commitcost-fix-${fix.prNumber ?? fix.commitSha.slice(0, 7)}.patch`;
+  return (
+    <div className="card">
+      <h3 style={{ margin: "0 0 4px", fontSize: 15 }}>Undo this cost</h3>
+      <div className="fix-saving">{usdFull(fix.remainingUsd)}/mo</div>
+      <p className="muted" style={{ margin: "2px 0 10px", fontSize: 13 }}>
+        {fix.laterSavingsUsd < 0
+          ? `${pr} added ${usdFull(fix.savingsUsd)}/mo; later changes to the same files already saved ${usdFull(-fix.laterSavingsUsd)}/mo, so reverting would save about this much now.`
+          : `Measured in the bill. Reverting only the lines below should save about this much; the rest of ${pr} stays.`}
+      </p>
+      {fix.suggestions.length > 0 && (
+        <p style={{ margin: "0 0 8px", fontSize: 13 }}>
+          <strong>Better fix:</strong> {fix.suggestions[0]}
+        </p>
+      )}
+      {fix.laterChanges.length > 0 && (
+        <p className="callout" style={{ fontSize: 12.5, margin: "0 0 8px" }}>
+          Changed again since: {fix.laterChanges.map((c) => (c.prNumber ? `#${c.prNumber}` : c.commitSha.slice(0, 7))).join(", ")}. The patch may need a manual merge.
+        </p>
+      )}
+      <Diff patch={fix.fix.patch.split("\n").filter((l) => !/^(diff --git|--- a\/|\+\+\+ b\/)/.test(l)).join("\n")} maxLines={30} />
+      <div className="copy-row">
+        <CopyButton text={fix.fix.patch} />
+        <span className="muted" style={{ fontSize: 12 }}>
+          then <code className="cmd">git apply {file}</code>
+        </span>
+      </div>
+      <p className="muted calc-ref" style={{ marginTop: 8 }}>
+        Or from the CLI: <code>npm run fix -- {fix.prNumber ?? fix.commitSha.slice(0, 7)} {file}</code>
+      </p>
+    </div>
+  );
+}
+
 export const dynamic = "force-dynamic";
 
 export default async function AnomalyPage({ params }: { params: Promise<{ id: string }> }) {
@@ -46,6 +85,7 @@ export default async function AnomalyPage({ params }: { params: Promise<{ id: st
   const { anomaly: a, suspects, series, topWarnings, billChanges, modeled } = data;
   const top = suspects[0];
   const confident = top && top.confidence >= 0.4;
+  const fix = confident && a.direction === "increase" && a.persistent ? await getFix(top.deploy.sha) : null;
   const name = SERVICE_NAMES[a.service] ?? a.service;
 
   return (
@@ -189,6 +229,7 @@ export default async function AnomalyPage({ params }: { params: Promise<{ id: st
         </section>
 
         <aside className="stack">
+          {fix && <FixCard fix={fix} />}
           <div className="card">
             <h3 style={{ margin: "0 0 4px", fontSize: 15 }}>Would the PR check have caught it?</h3>
             {!confident ? (

@@ -4,7 +4,7 @@
  */
 import { appendFileSync, readFileSync } from "node:fs";
 import type { Service } from "@commitcost/core";
-import { readCostProfileFile } from "./costProfile.js";
+import { readProfile } from "./costProfile.js";
 import { GitHub } from "./github.js";
 import { run } from "./run.js";
 
@@ -35,10 +35,11 @@ async function main(): Promise<void> {
   if (!(minConfidence >= 0 && minConfidence <= 1)) throw new Error("min-confidence must be between 0 and 1");
   const spendRaw = input("service-spend");
   const serviceSpend = spendRaw ? (JSON.parse(spendRaw) as Partial<Record<Service, number>>) : undefined;
-  const cost = readCostProfileFile(input("cost-profile") || undefined, {
+  const profile = readProfile(input("cost-profile") || undefined, {
     region: input("region") || undefined,
     assumptions: input("assumptions") || undefined,
   });
+  const historyMinUsd = Number(input("history-min-usd") || 1000);
 
   // GITHUB_API_URL is set by Actions (and differs on GitHub Enterprise Server).
   const result = await run(new GitHub(token, undefined, process.env.GITHUB_API_URL || undefined), {
@@ -47,7 +48,10 @@ async function main(): Promise<void> {
     headSha: event.pull_request.head.sha,
     minConfidence,
     serviceSpend,
-    cost,
+    cost: profile.cost,
+    calibration: profile.calibration,
+    history: profile.history,
+    historyMinUsd: Number.isFinite(historyMinUsd) ? historyMinUsd : 1000,
     dryRun: input("dry-run") === "true",
   }).catch((err: Error & { status?: number }) => {
     // Fork PRs get a read-only token; don't fail the build over the comment.
@@ -59,7 +63,7 @@ async function main(): Promise<void> {
   });
   if (!result) return;
 
-  console.log(`CommitCost: ${result.warnings.length} cost warning(s); comment ${result.action}.`);
+  console.log(`CommitCost: ${result.warnings.length} cost warning(s), ${result.history.length} file(s) with cost history; comment ${result.action}.`);
   for (const w of result.warnings) {
     if (w.side === "new" && w.line) console.log(`::warning file=${escapeProperty(w.file)},line=${w.line},title=${escapeProperty(w.title)}::${escapeData(`${w.why} Rough impact: ${w.impact.summary}.`)}`);
   }

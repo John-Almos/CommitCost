@@ -21,6 +21,8 @@ Then open http://localhost:3000.
 - **Anomaly:** the cost chart around the onset, ranked suspect PRs with confidence, the explanation, the diff lines that caused it, and whether the pre-merge PR check would have caught it.
 - **Changes:** every merged PR with the anomalies it was blamed for and the PR check result.
 - **PR check:** paste any `git diff` to see the warnings and the exact comment the GitHub Action would post.
+- **Receipts:** each merged change's pre-merge estimate next to what the bill measured afterwards, the catch rate, and the per-check corrections learned from them.
+- **Code map:** attributed monthly cost by directory, file and CODEOWNERS owner.
 
 `npm run demo:check` runs the same check without starting the dashboard (CI uses it) and prints each anomaly in the terminal. Example output for one anomaly:
 
@@ -43,6 +45,9 @@ Other commands:
 | `npm run seed` | Generate and store mock data without the summary |
 | `npm run sync` | Pull real AWS costs and GitHub history (see below) |
 | `npm run analyze` | Detect anomalies in stored data and rank suspect deploys |
+| `npm run receipts` | Compare each merged PR's estimate with the bill (`-- --post` comments on the PRs, `-- --all` lists every receipt) |
+| `npm run map` | Attributed cost by directory, file and CODEOWNERS owner |
+| `npm run fix -- <pr> out.patch` | Write a partial revert of the lines behind a PR's cost increase |
 | `npm test` | Run unit tests |
 | `npm run build:web` | Production build of the dashboard (`npm start -w @commitcost/web` serves it) |
 | `npm run build:action` | Rebuild `action/dist/index.cjs` after changing the action or engine |
@@ -127,6 +132,14 @@ Details, and how to add GCP or Azure, are in [docs/COST_MODEL.md](docs/COST_MODE
 - **Scoring:** 30% timing (closer is higher) and 70% relevance. Relevance comes from diff detectors that recognize cost patterns for the spiking service: queries inside loops, removed caches or batching, instance size and count changes, Lambda memory and concurrency, schedule frequency, cross-region replication, and removed S3 lifecycle rules. Files whose paths merely suggest the service count as weak evidence.
 - **Confidence** is lowered when a runner-up scores close behind, when nothing in the diff relates to the service, and for blips.
 
+## What other cost tools don't do
+
+Pre-merge tools such as Infracost estimate infrastructure-as-code changes and never check the estimate against the bill. FinOps platforms (Vantage, CloudZero, Datadog, AWS Cost Anomaly Detection) watch the bill but stop at a service, resource or IAM role. CommitCost connects the two, and three features build on that link:
+
+- **Cost receipts.** Once a change has merged and a week of billing has landed, CommitCost compares what the PR check predicted with what the bill measured: on target (0.67× to 1.5×), under- or overestimated, flagged without an amount, no change seen, or missed (the bill moved and the PR check said nothing). Each check learns a correction factor (the median of measured ÷ predicted, pulled toward 1× when there are few receipts), and the next PR check applies it and says so. `npm run receipts` prints them; `npm run receipts -- --post` adds each receipt as a comment on its merged PR (needs `GITHUB_TOKEN` with pull request write access).
+- **Code cost map.** Attributed monthly cost placed on the files that caused it (the attribution's evidence files, else the change's runtime files by lines changed) and rolled up by directory and CODEOWNERS owner. `sync` reads `CODEOWNERS` from the repo. The cost profile carries the costly files, so when a PR touches one the Action lists its cost history and owners, even if no detector fires. `npm run map` prints it.
+- **Fix patches.** For a confidently attributed increase, a partial revert of only the hunks that caused it, which `git apply` takes on the merged code, with the measured monthly saving (net of later changes that already cut cost on the same files) and the detector's better fix. It's on each anomaly page, and `npm run fix -- <pr-number> out.patch` writes it.
+
 ## Installing the GitHub Action
 
 The Action reviews each PR's diff with the same detectors the attribution engine uses and posts one comment listing likely cost increases: the file and line, why it costs money, an estimated monthly impact with its calculation (formula, inputs and their sources, assumptions), and a suggested fix. On later pushes it edits that comment instead of adding new ones, and it replaces it with an all-clear when the risky code is gone. Test, vendored and lock files are skipped, and only findings at or above `min-confidence` are reported, to keep false positives down. It needs no AWS access: it prices with the bundled AWS price snapshot, and you can give it your usage with a cost profile (below).
@@ -156,7 +169,7 @@ jobs:
           # assumptions: '{"cacheHitRate": 0.9, "requestsPerMonth": 30000000}'
 ```
 
-Without a profile, estimates use list prices with quantities from the diff, or a price per unit of traffic (for example, per million requests) when the diff doesn't give a volume. With one, they are calibrated with your bill: the instance count actually running under the resource's tag, your Lambda GB-seconds, GB on each network path, and your discount vs list. `npm run profile` writes the file from synced usage. It holds usage volumes and rates, no credentials, and needs a checkout step in the workflow so the Action can read it.
+Without a profile, estimates use list prices with quantities from the diff, or a price per unit of traffic (for example, per million requests) when the diff doesn't give a volume. With one, they are calibrated with your bill: the instance count actually running under the resource's tag, your Lambda GB-seconds, GB on each network path, and your discount vs list. Once you have analyzed history, the profile also carries the corrections learned from cost receipts and the files whose past changes raised the bill. `npm run profile` writes the file from synced data. It holds usage volumes, rates, file paths and PR titles, no credentials, and needs a checkout step in the workflow so the Action can read it.
 
 | Input | Default | Meaning |
 | --- | --- | --- |
@@ -166,6 +179,7 @@ Without a profile, estimates use list prices with quantities from the diff, or a
 | `region` | profile's main region, else `us-east-1` | Region for resources whose diff doesn't name one |
 | `assumptions` | none | JSON overriding the cost model's defaults (see the dashboard's Cost model page) |
 | `service-spend` | none | JSON of monthly spend per service, used as an upper bound when there's no profile |
+| `history-min-usd` | `1000` | With a profile that has history, a PR with no warnings still gets a comment when it touches a file whose past changes added at least this much per month |
 | `dry-run` | `false` | Write the review to the job summary only, never comment |
 
 The `warnings` output is the number of findings. PRs from forks get a read-only token, so on those the Action logs a warning and writes the job summary instead of commenting. Try it without installing anything on the dashboard's **PR check** page.

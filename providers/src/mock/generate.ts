@@ -45,9 +45,22 @@ export interface InjectedSpike {
   why: string;
 }
 
+/** The mock repo's CODEOWNERS file: teams own the services, infra and the web app. */
+export const MOCK_CODEOWNERS = `# Fallback owner for anything not listed below
+*                       @acme/platform
+
+/web/                   @acme/web-team
+/services/api/          @acme/api-team
+/services/worker/       @acme/worker-team
+/infra/                 @acme/infra
+/infra/terraform/s3.tf  @acme/infra @acme/storage
+`;
+
 export interface MockDataset {
   seed: number;
   repo: string;
+  /** CODEOWNERS file content for the mock repo. */
+  codeowners: string;
   start: IsoDate;
   end: IsoDate;
   costs: CostRecord[];
@@ -103,6 +116,7 @@ export function generateMockDataset(options: MockOptions = {}): MockDataset {
   return {
     seed,
     repo: MOCK_REPO,
+    codeowners: MOCK_CODEOWNERS,
     start,
     end,
     costs,
